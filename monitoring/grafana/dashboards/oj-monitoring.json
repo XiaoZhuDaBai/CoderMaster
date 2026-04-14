@@ -1,0 +1,448 @@
+{
+  "id": null,
+  "uid": "oj-microservice-monitoring",
+  "title": "OJ 微服务监控面板",
+  "tags": ["oj", "microservice", "monitoring"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 2,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "AI 调用次数",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(ai_calls_total) by (type)",
+          "legendFormat": "{{type}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "name": "Prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth"
+          }
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "AI Token 使用量（精确计量）",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(ai_tokens_total) by (token_type)",
+          "legendFormat": "{{token_type}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "name": "Prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line"
+          },
+          "description": "由 TokenUsageListener 从 DeepSeek API 响应中精确捕获的 Token 使用量"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "AI Token 消耗速率",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "targets": [
+        {
+          "expr": "rate(ai_tokens_total[5m])",
+          "legendFormat": "{{token_type}} 速率",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "name": "Prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth"
+          },
+          "description": "AI Token 消耗速率（tokens/秒），用于观察实时消耗趋势"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "title": "AI 单次调用 Token 量分布",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "targets": [
+        {
+          "expr": "sum(ai_tokens_total) by (token_type) / sum(ai_calls_total) by (type)",
+          "legendFormat": "单次平均 {{token_type}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "name": "Prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line"
+          },
+          "description": "每次 AI 调用平均消耗的 Token 数量"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "AI 调用响应时间",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "targets": [
+        {
+          "expr": "sum(ai_calls_duration_seconds_sum) by (type) / sum(ai_calls_duration_seconds_count) by (type) * 1000",
+          "legendFormat": "平均耗时(ms) - {{type}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "name": "Prometheus"
+          }
+        },
+        {
+          "expr": "max(ai_calls_duration_seconds_max) by (type) * 1000",
+          "legendFormat": "最大耗时(ms) - {{type}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "name": "Prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line"
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "消息队列消息数",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "targets": [
+        {
+          "expr": "sum(rabbitmq_messages_published_total) by (exchange, routing_key)",
+          "legendFormat": "发布 - {{exchange}}/{{routing_key}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "name": "Prometheus"
+          }
+        },
+        {
+          "expr": "sum(rabbitmq_messages_consumed_total) by (queue)",
+          "legendFormat": "消费 - {{queue}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "name": "Prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "drawStyle": "line"
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "判题容器池状态",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "targets": [
+        {
+          "expr": "judge_container_pool_size",
+          "legendFormat": "总容器数 - {{language}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "name": "Prometheus"
+          }
+        },
+        {
+          "expr": "judge_container_pool_available",
+          "legendFormat": "可用容器数 - {{language}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "name": "Prometheus"
+          }
+        },
+        {
+          "expr": "judge_container_pool_in_use",
+          "legendFormat": "使用中容器数 - {{language}}",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "name": "Prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line"
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "判题容器操作统计",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "targets": [
+        {
+          "expr": "sum(judge_container_created_total) by (language)",
+          "legendFormat": "创建 - {{language}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "name": "Prometheus"
+          }
+        },
+        {
+          "expr": "sum(judge_container_destroyed_total) by (language)",
+          "legendFormat": "销毁 - {{language}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "name": "Prometheus"
+          }
+        },
+        {
+          "expr": "sum(judge_container_faults_total) by (language)",
+          "legendFormat": "故障 - {{language}}",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "name": "Prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "drawStyle": "line"
+          }
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "服务健康状态",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 24},
+      "targets": [
+        {
+          "expr": "up{job=\"ai-service\"}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "name": "Prometheus"
+          }
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {"text": "DOWN", "color": "red"},
+                "1": {"text": "UP", "color": "green"}
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": null, "color": "red"},
+              {"value": 1, "color": "green"}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "AI 调用错误次数",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
+      "targets": [
+        {
+          "expr": "sum(ai_calls_errors_total)",
+          "legendFormat": "错误总数",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "name": "Prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line"
+          }
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "HTTP 请求总数（按服务）",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 28},
+      "targets": [
+        {
+          "expr": "sum(http_server_requests_seconds_count) by (application)",
+          "legendFormat": "{{application}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "name": "Prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "drawStyle": "line"
+          }
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "JVM 堆内存使用率",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 36},
+      "targets": [
+        {
+          "expr": "jvm_memory_used_bytes{area=\"heap\"} / jvm_memory_max_bytes{area=\"heap\"}",
+          "legendFormat": "{{application}} - {{id}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "name": "Prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": {
+            "drawStyle": "line"
+          }
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "RabbitMQ 连接与通道",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 36},
+      "targets": [
+        {
+          "expr": "rabbitmq_connections",
+          "legendFormat": "连接数 - {{name}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "name": "Prometheus"
+          }
+        },
+        {
+          "expr": "rabbitmq_channels",
+          "legendFormat": "通道数 - {{name}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "name": "Prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line"
+          }
+        }
+      }
+    }
+  ],
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "liveNow": false,
+  "style": "dark",
+  "templating": {
+    "list": []
+  },
+  "timepicker": {},
+  "weekStart": ""
+}
