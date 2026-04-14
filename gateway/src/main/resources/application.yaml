@@ -1,0 +1,83 @@
+spring:
+  application:
+    name: oj-gateway
+  main:
+    web-application-type: reactive
+  cloud:
+    gateway:
+      discovery:
+        locator:
+          enabled: true
+          lower-case-service-id: true
+      routes:
+        # 用户服务
+        - id: user-service
+          uri: lb://oj-user
+          predicates:
+            - Path=/api/user/**
+          filters:
+            - StripPrefix=0
+        
+        # AI服务 - 题目生成（优先级更高，放在前面）
+        - id: ai-service-problem
+          uri: lb://oj-ai
+          predicates:
+            - Path=/api/problem/generate
+          filters:
+            - StripPrefix=0
+        
+        # 问题服务 - 题目交付
+        - id: problem-service-delivery
+          uri: lb://oj-problem
+          predicates:
+            - Path=/api/problem/delivery/**
+          filters:
+            - StripPrefix=0
+        
+        # AI服务 - 题解生成
+        - id: ai-service-solution
+          uri: lb://oj-ai
+          predicates:
+            - Path=/api/solution/**
+          filters:
+            - StripPrefix=0
+        
+        # 提交服务
+        - id: submission-service
+          uri: lb://oj-submission
+          predicates:
+            - Path=/api/submissions/**
+          filters:
+            - StripPrefix=0
+        
+        # 判题服务
+        - id: judge-service
+          uri: lb://oj-judge
+          predicates:
+            - Path=/api/judge/**
+          filters:
+            - StripPrefix=0
+        
+        # 竞赛服务
+        - id: contest-service
+          uri: lb://oj-contest
+          predicates:
+            - Path=/api/contest/**
+          filters:
+            - StripPrefix=0
+    nacos:
+      discovery:
+        server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+  data:
+    redis:
+      database: 3
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2000
+
+server:
+  port: 8080
+
+jwt:
+  secret: ${JWT_SECRET:}
