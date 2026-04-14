@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="xiaozhu.problem.mapper.QuestionTestCaseMapper">
+
+    <insert id="insertTestCase" parameterType="xiaozhu.problem.entity.QuestionTestCase">
+        INSERT INTO question_test_case (
+            question_id,
+            case_index,
+            `input`,
+            `expected_output`,
+            is_public,
+            case_type,
+            weight,
+            generation_source,
+            version,
+            content_hash,
+            time_limit,
+            memory_limit,
+            create_time,
+            update_time
+        ) VALUES (
+            #{questionId},
+            #{caseIndex},
+            #{input, jdbcType=LONGVARCHAR, typeHandler=org.apache.ibatis.type.StringTypeHandler},
+            #{expectedOutput, jdbcType=LONGVARCHAR, typeHandler=org.apache.ibatis.type.StringTypeHandler},
+            #{isPublic},
+            #{caseType},
+            #{weight},
+            #{generationSource},
+            #{version},
+            #{contentHash},
+            #{timeLimit},
+            #{memoryLimit},
+            #{createTime},
+            #{updateTime}
+        )
+    </insert>
+
+    <insert id="updateTestCase" parameterType="xiaozhu.problem.entity.QuestionTestCase">
+        UPDATE question_test_case SET
+            question_id = #{questionId},
+            `input` = #{input, jdbcType=LONGVARCHAR, typeHandler=org.apache.ibatis.type.StringTypeHandler},
+            `expected_output` = #{expectedOutput, jdbcType=LONGVARCHAR, typeHandler=org.apache.ibatis.type.StringTypeHandler},
+            is_public = #{isPublic},
+            case_type = #{caseType},
+            weight = #{weight},
+            generation_source = #{generationSource},
+            version = #{version},
+            time_limit = #{timeLimit},
+            memory_limit = #{memoryLimit},
+            update_time = #{updateTime}
+        WHERE case_id = #{caseId}
+    </insert>
+
+    <select id="selectByContentHash" resultType="xiaozhu.problem.entity.QuestionTestCase">
+        SELECT case_id as caseId,
+               question_id as questionId,
+               case_index as caseIndex,
+               input,
+               expected_output as expectedOutput,
+               is_public as isPublic,
+               case_type as caseType,
+               weight,
+               generation_source as generationSource,
+               version,
+               content_hash as contentHash,
+               time_limit as timeLimit,
+               memory_limit as memoryLimit,
+               create_time as createTime,
+               update_time as updateTime
+        FROM question_test_case
+        WHERE content_hash = #{contentHash}
+        ORDER BY case_index ASC
+    </select>
+
+</mapper>
