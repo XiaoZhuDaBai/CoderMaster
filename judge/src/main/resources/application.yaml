@@ -1,0 +1,48 @@
+spring:
+  config:
+    import:
+      - classpath:sandboxpool.yaml
+      - classpath:error.yaml
+  application:
+    name: oj-judge
+  rabbitmq:
+    username: ${RABBITMQ_USERNAME:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+    addresses: ${RABBITMQ_HOST:localhost}:${RABBITMQ_PORT:5672}
+    virtual-host: ${RABBITMQ_VHOST:/}
+  data:
+    redis:
+      database: 0
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2000
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+
+server:
+  port: 8085
+
+# 网关来源验证配置
+gateway:
+  source-check:
+    enabled: true  # 启用来源验证，防止直接访问服务端口
+
+# Actuator 配置
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  prometheus:
+    metrics:
+      export:
+        enabled: true

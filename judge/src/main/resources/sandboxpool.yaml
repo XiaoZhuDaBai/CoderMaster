@@ -1,0 +1,113 @@
+sandbox:
+  host-code-base-dir: ${user.dir}
+  docker:
+    host: tcp://localhost:2375
+    connect-timeout: 30000
+    read-timeout: 60000
+  monitoring:
+    health-check-interval: 30000
+    metrics-enabled: true
+  security:
+    enable-network-isolation: true
+    max-file-size: 10485760
+    allowed-system-calls: ["read", "write", "exit"]
+  languages:
+    java:
+      image-name: "swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/eclipse-temurin:21.0.6_7-jdk-noble"
+      container-name-prefix: "judge-java"
+      volume-dir: "/app"
+      memory-limit: 536870912
+      memory-swap-limit: 536870912
+      cpu-limit: 1.0
+      pool-size: 1
+      compile-timeout: 30000
+      execute-timeout: 5000
+      compile-cmd: "javac -encoding UTF-8 %s"
+      run-cmd: "java -Xmx64m -XX:+UseSerialGC -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -Dfile.encoding=UTF-8 -cp %s Main < %s"
+      need-compile: true
+      use-container-pool: true
+    cpp:
+      image-name: "gcc:13"
+      container-name-prefix: "judge-cpp"
+      volume-dir: "/app"
+      memory-limit: 536870912
+      memory-swap-limit: 536870912
+      cpu-limit: 1.0
+      pool-size: 1
+      compile-timeout: 30000
+      execute-timeout: 5000
+      compile-cmd: "g++ -o Main %s"
+      run-cmd: "./Main < %s"
+      need-compile: true
+      use-container-pool: true
+    c:
+      image-name: "gcc:13"
+      container-name-prefix: "judge-c"
+      volume-dir: "/app"
+      memory-limit: 268435456
+      memory-swap-limit: 268435456
+      cpu-limit: 1.0
+      pool-size: 1
+      compile-timeout: 30000
+      execute-timeout: 5000
+      compile-cmd: "gcc -o Main %s"
+      run-cmd: "./Main < %s"
+      need-compile: true
+      use-container-pool: true
+    python3:
+      image-name: "python:3.11-alpine"
+      container-name-prefix: "judge-python"
+      volume-dir: "/app"
+      memory-limit: 268435456
+      memory-swap-limit: 268435456
+      cpu-limit: 1.0
+      pool-size: 1
+      compile-timeout: 10000
+      execute-timeout: 5000
+      compile-cmd: ""
+      run-cmd: "python %s < %s"
+      need-compile: false
+      use-container-pool: true
+    javascript:
+      image-name: "node:20-alpine"
+      container-name-prefix: "judge-js"
+      volume-dir: "/app"
+      memory-limit: 268435456
+      memory-swap-limit: 268435456
+      cpu-limit: 1.0
+      pool-size: 1
+      compile-timeout: 10000
+      execute-timeout: 5000
+      compile-cmd: ""
+      run-cmd: "node %s < %s"
+      need-compile: false
+      use-container-pool: true
+    # 新增语言示例 - 只需要在这里配置！
+    go:
+      image-name: "golang:1.22-alpine"
+      container-name-prefix: "judge-go"
+      volume-dir: "/app"
+      memory-limit: 268435456
+      memory-swap-limit: 268435456
+      cpu-limit: 1.0
+      pool-size: 1
+      compile-timeout: 30000
+      execute-timeout: 5000
+      compile-cmd: "go build -o Main %s"
+      run-cmd: "./Main < %s"
+      need-compile: true
+      use-container-pool: true
+#    rust:
+#      image-name: "rust:1.75-alpine"
+#      container-name-prefix: "judge-rust"
+#      volume-dir: "/app"
+#      memory-limit: 268435456
+#      memory-swap-limit: 268435456
+#      cpu-limit: 1.0
+#      pool-size: 2
+#      compile-timeout: 60000
+#      execute-timeout: 5000
+#      compile-cmd: "rustc -o Main %s"
+#      run-cmd: "./Main < %s"
+#      need-compile: true
+#      use-container-pool: true
