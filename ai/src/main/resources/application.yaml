@@ -1,0 +1,129 @@
+spring:
+  application:
+    name: oj-ai
+  config:
+    import: optional:file:./ai-logback-spring.xml
+  output:
+    ansi:
+      enabled: always
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+  data:
+    redis:
+      database: 0
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 15000
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+          max-wait: 10000
+  rabbitmq:
+    username: ${RABBITMQ_USERNAME:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+    addresses: ${RABBITMQ_HOST:localhost}:${RABBITMQ_PORT:5672}
+    virtual-host: ${RABBITMQ_VHOST:/}
+server:
+  port: 8084
+
+gateway:
+  source-check:
+    enabled: true
+
+rate-limit:
+  problem-generation:
+    window-size: 60
+    max-requests: 10
+  solution-generation:
+    window-size: 60
+    max-requests: 3
+
+langchain4j:
+  open-ai:
+    chat-model:
+      base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com/v1}
+      api-key: ${DEEPSEEK_API_KEY:}
+      model-name: deepseek-chat
+      max-tokens: 8192
+      temperature: 1.5
+      log-requests: true
+      log-responses: false
+      max-retries: 3
+      test-case-connect-timeout-seconds: 60
+      test-case-read-timeout-seconds: 240
+      test-case-request-timeout-seconds: 300
+    reasoning-chat-model:
+      base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com/v1}
+      api-key: ${DEEPSEEK_API_KEY:}
+      model-name: deepseek-reasoner
+      max-tokens: 32768
+      temperature: 0.1
+      log-requests: true
+      log-responses: false
+      max-retries: 3
+      test-case-connect-timeout-seconds: 60
+      test-case-read-timeout-seconds: 240
+      test-case-request-timeout-seconds: 300
+    streaming-chat-model:
+      base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com/v1}
+      api-key: ${DEEPSEEK_API_KEY:}
+      model-name: deepseek-chat
+      max-tokens: 8192
+      temperature: 0.8
+      log-requests: true
+      log-responses: true
+    reasoning-streaming-chat-model:
+      base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com/v1}
+      api-key: ${DEEPSEEK_API_KEY:}
+      model-name: deepseek-reasoner
+      max-tokens: 32768
+      temperature: 0.01
+      log-requests: true
+      log-responses: true
+    test-case-chat-model:
+      base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com/v1}
+      api-key: ${DEEPSEEK_API_KEY:}
+      model-name: deepseek-chat
+      max-tokens: 8192
+      temperature: 0.5
+      log-requests: true
+      log-responses: false
+      max-retries: 3
+      test-case-connect-timeout-seconds: 60
+      test-case-read-timeout-seconds: 240
+      test-case-request-timeout-seconds: 300
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+
+ai:
+  testcase:
+    use-v2-model: true
+    generation:
+      max-retries: 3
+      retry-delay-ms: 2000
+      retry-backoff-multiplier: 2.0
+
+spring-retry:
+  max-attempts: 3
+  initial-interval-ms: 2000
+  multiplier: 2.0
+  max-interval-ms: 10000

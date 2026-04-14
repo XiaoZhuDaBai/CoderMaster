@@ -1,0 +1,208 @@
+# 【generatorCode 专用提示词】
+
+> 前提：solutionCode 已经过样例验证，算法逻辑正确。
+> 现在基于已验证的 solutionCode 生成 generatorCode（只生成 input，不生成 expectedOutput）。
+
+---
+
+## 【输入信息】
+
+- `problem_description`：题目完整描述（标题、描述、输入格式、输出格式、约束条件）
+- `sample_cases`：1-2 个示例用例，格式参考
+- `solutionCode`：已经过样例验证的 Java 正解代码（已确认正确）
+
+---
+
+## 【输出格式】
+
+整个回复只能包含一个 JSON 对象，首字符为 `{`、尾字符为 `}`，禁止任何 Markdown 标记、解释文字或多余文本。
+
+JSON 字段：
+- `generatorCode`：String，Java 测试数据生成器代码（完整可编译运行，**只输出 input，不输出 expectedOutput**）
+- `generatorArgs`：String，生成器的随机种子（纯数字字符串，如 `"42"`）
+
+---
+
+## 【第一步：理解题目与 solutionCode】
+
+基于 problem_description 和 solutionCode，明确：
+- 输入格式（inputDesc）：有哪些行、每行什么含义、有没有多组测试数据
+- solutionCode 的输入解析逻辑是什么（读取顺序、参数含义）
+
+**注意：generatorCode 的输入格式必须与 solutionCode 的输入解析逻辑完全一致。**
+
+---
+
+## 【第二步：生成 generatorCode】
+
+### 2.1 generatorCode 格式约束
+
+**【强制要求】以下要求必须全部满足，否则编译必定失败：**
+
+1. **类名必须是 `Main`**，禁止有任何 package 声明
+2. 禁止有多余的 import（仅允许 JDK 标准库 import）
+3. 代码必须以 `public class Main` 开头，紧接着是 `{`
+4. 只能是单一主类，禁止嵌套类、内部类
+5. 禁止多余的空行、缩进错误
+
+### 2.2 输出格式约束
+
+```
+---INPUT---
+[完整输入字符串，换行用 \n 表示]
+---INPUT---
+[下一个完整输入]
+...（重复，共 10-15 组）
+```
+
+**注意：输出是 ---INPUT--- 分隔，不是 ---CASE---，也不需要 output 字段。**
+
+### 2.3 分档生成测试数据（10-15 组总计）
+
+**【多样性强制要求】每档内部的数据必须多样化，同档数据不得雷同：**
+
+| 档位 | 描述 | 数量 | 重点 |
+|------|------|------|------|
+| 边界档 | 约束极值（n=max/min、元素=max/min）、单元素 | 2-3 组 | **每组必须使用不同的边界模式**：极小n+极大值、极大n+极小值、混合边界、单元素特殊处理 |
+| 易错档 | 针对算法最可能出错的地方 | 3-4 组 | **必须使用不同的构造策略**：递增序列、递减序列、山峰序列、谷底序列、对称序列、重复元素序列等 |
+| 小规模档 | 暴力/枚举可处理（n ≤ 20 或核心参数 ≤ 10） | 2-3 组 | 保证正确性 |
+| 中等档 | n 30-100，参数在约束范围内 | 1-2 组 | 功能验证 |
+| 大规模档 | n 200-500，核心参数保持小 | 1-2 组 | 大数据压力 |
+
+**【随机分布要求】对于数组/集合类输入，每组数据必须使用不同分布策略：**
+- 均匀随机分布
+- 有序递增/递减序列
+- 全部相同值
+- 全部不同值（随机打乱）
+- 正态分布/近正态分布
+- 满足特定约束的伪随机（如单调递增但有少量重复）
+- 近似最坏情况序列（如近乎有序、逆序）
+> **禁止所有数组/集合使用同一种随机生成方式。**
+
+**【元素取值多样性】数值类数据的取值策略：**
+- 正数、负数、零的混合比例要不同（有的组全是正，有的全是负，有的混合）
+- 大小数值混合（既有微小值也有极大值）
+- 禁止所有用例使用相似的数值范围
+
+### 2.4 generatorCode 编写规则
+
+**【最高优先级】每个输出的 input 必须是完整的标准输入字符串，严格按 solutionCode 的输入解析格式：**
+- 如果 solutionCode 先读 T 再读 T 组数据，generatorCode 输出的每个 input 也必须包含 T 和对应数据行
+- **禁止自行简化输入格式**
+
+**【去重强制要求】所有生成的 input 必须两两不同：**
+- 检查每个新生成的 input，如果与已生成的任何 input 完全相同，则重新生成
+
+**【仅输出 input，不计算 expectedOutput】**
+
+### 2.5 代码编写补充规则
+
+**【类型安全强制要求】**
+- 禁止 `double` 和 `long` 混用而不显式 cast（错误示例：`rand.nextDouble() * 5e8 + 1e8`）
+- 生成随机整数时，优先使用 `rand.nextInt(bound)` 或 `(long) (rand.nextDouble() * bound)`
+- 科学计数法常量（如 `1e8`）与整数运算时必须对 `rand.nextDouble() * bound` 部分整体 cast
+- 推荐写法：`long T = (long) (rand.nextDouble() * 5_0000_0000L) + 100_000_000L;`
+
+### 2.6 示例框架
+
+```java
+import java.util.*;
+
+public class Main {
+    private static Random rand;
+    private static StringBuilder out = new StringBuilder();
+
+    public static void main(String[] args) {
+        Scanner sc = new Scanner(System.in);
+        long SEED = Long.parseLong(sc.nextLine().trim());
+        rand = new Random(SEED);
+
+        // 1. 边界档（2-3组）
+        boundaryCases();
+        // 2. 易错档（3-4组）
+        trickyCases();
+        // 3. 小规模档（2-3组）
+        smallCases();
+        // 4. 中等档（1-2组）
+        mediumCases();
+        // 5. 大规模档（1-2组）
+        largeCases();
+
+        System.out.print(out.toString());
+    }
+
+    private static void emitInput(String input) {
+        out.append("---INPUT---\n");
+        out.append(input).append("\n");
+    }
+
+    // 边界档
+    private static void boundaryCases() {
+    }
+
+    // 易错档
+    private static void trickyCases() {
+    }
+
+    // 小规模档
+    private static void smallCases() {
+    }
+
+    // 中等档
+    private static void mediumCases() {
+    }
+
+    // 大规模档
+    private static void largeCases() {
+    }
+}
+```
+
+---
+
+## 【校验清单】
+
+- [ ] generatorCode 的 input 格式与 solutionCode 输入解析逻辑完全一致
+- [ ] 每个 input 是完整字符串（内部换行用 `\n` 转义）
+- [ ] 所有 input 两两不同（无重复用例）
+- [ ] generatorCode 输出格式严格符合 `---INPUT---` 分隔规范
+- [ ] generatorCode 只输出 input，不输出 expectedOutput
+- [ ] generatorArgs 仅包含随机种子（纯数字字符串）
+- [ ] 输入参数范围没有超出题目约束条件
+- [ ] JSON 格式正确，无多余逗号、括号匹配
+
+---
+
+## 【禁止事项】
+
+- 禁止生成 solutionCode（已有）
+- 禁止在 generatorCode 中计算或输出 expectedOutput（只输出 input）
+- 禁止省略任何输入行（必须包含 T、所有测试组数据）
+- 禁止输出任何解释、注释或非 JSON 内容
+- 禁止使用 JDK 标准库以外的任何依赖
+- **【最高优先级】禁止在代码中出现 `package` 声明**
+- **【最高优先级】类名必须是 `Main`**
+- **【最高优先级】所有 input 必须两两不同，禁止重复**
+- **【最高优先级】输出使用 ---INPUT--- 分隔符，不是 ---CASE---，不输出 output 字段**
+
+---
+
+## 【题目信息】
+
+problem_description：
+
+{{problem_description}}
+
+---
+
+sample_cases：
+
+{{sample_cases}}
+
+---
+
+solutionCode（已验证正确，生成 generatorCode 时必须保持输入格式一致）：
+
+```java
+{{solutionCode}}
+```

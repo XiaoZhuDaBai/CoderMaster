@@ -1,0 +1,239 @@
+# 【沙箱验算版】测试用例生成提示词 v3
+
+> 本提示词彻底消除 expectedOutput 幻觉。
+> AI 生成 solutionCode（通过样例验证）和 generatorCode（只生成 input，不生成 expectedOutput）。
+> expectedOutput 完全由后端用 solutionCode 在沙箱中执行 generatorCode 产生的输入得到。
+
+---
+
+## 【输入信息】
+
+- `problem_description`：题目完整描述（标题、描述、输入格式、输出格式、约束条件）
+- `sample_cases`：1-2 个示例用例，格式参考（**仅参考格式，不复制数据**）
+
+---
+
+## 【输出格式】
+
+整个回复只能包含一个 JSON 对象，首字符为 `{`、尾字符为 `}`，禁止任何 Markdown 标记、解释文字或多余文本。
+
+JSON 字段：
+- `solutionCode`：String，经过样例验证后的 Java 正解代码（完整可编译运行）
+- `generatorCode`：String，Java 测试数据生成器代码（完整可编译运行，**只输出 input，不输出 expectedOutput**）
+- `generatorArgs`：String，生成器的随机种子（纯数字字符串，如 `"42"`）
+
+---
+
+## 【第一步：生成并验证 solutionCode】
+
+**绝对禁止跳过此步骤。**
+
+### 1.1 理解题目
+
+仔细阅读 problem_description：
+- 题目要求解什么问题（算法本质）
+- 输入格式是什么（inputDesc）：有哪些行、每行什么含义、有没有多组测试数据
+- 输出格式是什么（outputDesc）
+- 约束条件是什么（极值、数据规模）
+
+### 1.2 写出 solutionCode
+
+- **类名必须是 `Main`**，禁止有任何 package 声明
+- 使用 `Scanner` / `BufferedReader` 读取标准输入
+- **必须严格按题目 inputDesc 的格式解析输入**：
+  - 如果 inputDesc 说第一行是 T 表示测试组数，就必须先读 T，再循环读 T 组数据
+  - 如果 inputDesc 说第二行是 n 和 K，就必须一次读两个整数
+  - **绝对不能凭自己的猜测改变输入格式**
+- 严格按题目 outputDesc 输出结果
+- 可使用任何 JDK 17 标准库
+
+### 1.3 用样例验证 solutionCode
+
+> **这一步是本提示词最核心的环节。跳过此步意味着题目可能被完全理解错。**
+
+用 mental simulation（心算/手算）将 sample_cases 中的每组样例代入 solutionCode 模拟运行：
+
+1. 按 solutionCode 的输入解析逻辑，逐行读取 sample_cases 的 input
+2. 按 solutionCode 的算法逻辑，计算出每一步的中间值
+3. 对比最终输出与 sample_cases 的 expectedOutput
+
+**如果两者不一致**：
+- 说明 solutionCode 的算法逻辑或输入解析有误
+- 必须回到 1.2 重新分析题意并修正代码
+- 重复此验证步骤，直到所有样例都通过
+
+**如果两者一致**：
+- solutionCode 验证通过，进入第二步
+
+---
+
+## 【第二步：生成 generatorCode（只生成 input，不生成 expectedOutput）】
+
+> 只有当第一步验证通过后，才开始写 generatorCode。
+> **expectedOutput 不在此生成，由后端沙箱执行 solutionCode 产生。**
+
+### 2.1 generatorCode 格式约束
+
+**【强制要求】以下要求必须全部满足，否则编译必定失败：**
+
+1. **类名必须是 `Main`**，禁止有任何 package 声明
+2. 禁止有多余的 import（仅允许 JDK 标准库 import）
+3. 代码必须以 `public class Main` 开头，紧接着是 `{`
+4. 只能是单一主类，禁止嵌套类、内部类
+5. 禁止多余的空行、缩进错误
+
+### 2.2 输出格式约束
+
+```
+---INPUT---
+[完整输入字符串，换行用 \n 表示]
+---INPUT---
+[下一个完整输入]
+...（重复，共 10-15 组）
+```
+
+**注意：输出是 ---INPUT--- 分隔，不是 ---CASE---，也不需要 output 字段。**
+
+### 2.3 分析题目关键点
+
+在生成测试数据之前，明确以下问题：
+
+1. **算法本质**：核心算法是什么（贪心、DP、模拟、搜索……）？
+2. **易错边界**：哪种输入最容易让参赛者写出错误解法？
+   - 若题目含排序：重复元素、已排序、逆序
+   - 若题目含递归/DP：递归深度、DP 边界初始化
+   - 若题目含边界：空输入、单个元素、满规模、负数、0
+   - 若题目有数学公式：边界条件、特殊值
+3. **题目约束条件**：极值（最大值、最小值）和特殊限制是什么？
+4. **分支路径**：题目描述中有哪些 if-else 分支？每条分支的条件边界在哪里？
+
+### 2.4 分档生成测试数据（10-15 组总计）
+
+| 档位 | 描述 | 数量 | 重点 |
+|------|------|------|------|
+| 边界档 | 约束极值（n=max/min、元素=max/min）、单元素 | 2-3 组 | 验证边界逻辑 |
+| 易错档 | 针对算法最可能出错的地方（见上方分析） | 3-4 组 | **最重要** |
+| 小规模档 | 暴力/枚举可处理（n ≤ 20 或核心参数 ≤ 10） | 2-3 组 | 保证正确性 |
+| 中等档 | n 30-100，参数在约束范围内 | 1-2 组 | 功能验证 |
+| 大规模档 | n 200-500，核心参数保持小 | 1-2 组 | 大数据压力 |
+
+### 2.5 generatorCode 编写规则
+
+**【最高优先级】每个输出的 input 必须是完整的标准输入字符串，严格按 inputDesc 格式：**
+- 不要只写 `5`，要写 `"1\n5"`（T=1，一组数据，n=5）
+- 如果题目有多组测试数据，输入必须包含 T 行和对应的数据行
+- **禁止自行简化输入格式**
+
+**【去重强制要求】所有生成的 input 必须两两不同：**
+- 检查每个新生成的 input，如果与已生成的任何 input 完全相同，则重新生成
+- 不要出现重复的测试用例
+
+**【仅输出 input，不计算 expectedOutput】**
+
+generatorCode 只管生成输入，不计算答案。后端会用 solutionCode 自动算出 expectedOutput。
+
+**易错档设计指南**（根据本题实际算法选择适用的）：
+- **贪心题**：反例数据（乱序、全升序、全降序）
+- **DP题**：dp[0]/dp[1] 初始状态错误、状态转移方向错误
+- **模拟/递归题**：递归深度溢出、模拟步骤遗漏
+- **搜索/回溯题**：剪枝条件遗漏、visited 数组处理错误
+- **数学/公式题**：特殊值（0、1、负数）、精度问题、溢出
+- **字符串题**：空串、单字符、相邻重复字符
+- **树/图题**：单节点、链状、深层递归、环结构
+
+### 2.6 generatorCode 示例框架
+
+```java
+import java.util.*;
+
+public class Main {
+    private static Random rand;
+    private static StringBuilder out = new StringBuilder();
+
+    public static void main(String[] args) {
+        Scanner sc = new Scanner(System.in);
+        long SEED = Long.parseLong(sc.nextLine().trim());
+        rand = new Random(SEED);
+
+        // 1. 边界档（2-3组）
+        boundaryCases();
+        // 2. 易错档（3-4组）
+        trickyCases();
+        // 3. 小规模档（2-3组）
+        smallCases();
+        // 4. 中等档（1-2组）
+        mediumCases();
+        // 5. 大规模档（1-2组）
+        largeCases();
+
+        System.out.print(out.toString());
+    }
+
+    private static void emitInput(String input) {
+        out.append("---INPUT---\n");
+        out.append(input).append("\n");
+    }
+
+    // 边界档
+    private static void boundaryCases() {
+        // 【必须严格按题目 inputDesc 格式生成每一组数据】
+    }
+
+    // 易错档
+    private static void trickyCases() {
+        // 【必须严格按题目 inputDesc 格式生成每一组数据】
+    }
+
+    // 小规模档
+    private static void smallCases() {
+        // n ≤ 20，核心参数 ≤ 10
+    }
+
+    // 中等档
+    private static void mediumCases() {
+        // n 30-100，参数在约束范围内
+    }
+
+    // 大规模档
+    private static void largeCases() {
+        // n 200-500，核心参数保持小
+    }
+}
+```
+
+---
+
+## 【校验清单】
+
+**第一步验证（必须通过后再进入第二步）：**
+- [ ] solutionCode 的输入解析逻辑严格遵循题目 inputDesc 格式
+- [ ] 已用 sample_cases 验证 solutionCode：每个样例的 output 与 expectedOutput 完全一致
+- [ ] 若验证不通过，已修正 solutionCode 并重新验证
+- [ ] solutionCode 可编译（无语法错误）
+
+**第二步验证：**
+- [ ] generatorCode 的 input 格式与 solutionCode 输入解析逻辑完全一致
+- [ ] 每个 input 是完整字符串（内部换行用 `\n` 转义）
+- [ ] 所有 input 两两不同（无重复用例）
+- [ ] generatorCode 输出格式严格符合 `---INPUT---` 分隔规范
+- [ ] generatorCode 只输出 input，不输出 expectedOutput
+- [ ] generatorArgs 仅包含随机种子（纯数字字符串）
+- [ ] 输入参数范围没有超出题目约束条件
+
+**JSON 验证：**
+- [ ] JSON 格式正确，无多余逗号、括号匹配
+
+---
+
+## 【禁止事项】
+
+- 禁止跳过第一步直接写 generatorCode
+- 禁止在 solutionCode 验证不通过的情况下继续生成 generatorCode
+- 禁止在 generatorCode 中计算或输出 expectedOutput（只输出 input）
+- 禁止省略任何输入行（必须包含 T、所有测试组数据）
+- 禁止输出任何解释、注释或非 JSON 内容
+- 禁止使用 JDK 标准库以外的任何依赖
+- **【最高优先级】禁止在代码中出现 `package` 声明**
+- **【最高优先级】类名必须是 `Main`**
+- **【最高优先级】所有 input 必须两两不同，禁止重复**
+- **【最高优先级】输出使用 ---INPUT--- 分隔符，不是 ---CASE---，不输出 output 字段**

@@ -1,0 +1,92 @@
+# 【纯 solutionCode 生成提示词】
+
+> 只生成一个 Java 正解代码，必须经过样例验证后才能输出。
+> 不生成 generatorCode，不生成 expectedOutput，不生成任何 JSON。
+
+---
+
+## 【输出格式】
+
+整个回复只能包含一个 JSON 对象，首字符为 `{`、尾字符为 `}`，禁止任何 Markdown 标记、解释文字或多余文本。
+
+JSON 字段：
+- `solutionCode`：String，经过样例验证后的 Java 正解代码（完整可编译运行）
+
+---
+
+## 【第一步：理解题目】
+
+仔细阅读下面的 problem_description：
+- 题目要求解什么问题（算法本质）
+- 输入格式是什么（inputDesc）：有哪些行、每行什么含义、有没有多组测试数据
+- 输出格式是什么（outputDesc）
+- 约束条件是什么（极值、数据规模）
+
+---
+
+## 【第二步：写出 solutionCode】
+
+- **类名必须是 `Main`**，禁止有任何 package 声明
+- 使用 `Scanner` / `BufferedReader` 读取标准输入
+- **必须严格按题目 inputDesc 的格式解析输入**：
+  - 如果 inputDesc 说第一行是 T 表示测试组数，就必须先读 T，再循环读 T 组数据
+  - 如果 inputDesc 说第二行是 n 和 K，就必须一次读两个整数
+  - **绝对不能凭自己的猜测改变输入格式**
+- 严格按题目 outputDesc 输出结果
+- 可使用任何 JDK 17 标准库
+
+---
+
+## 【第三步：用样例验证 solutionCode】
+
+> **这一步是本提示词最核心的环节。跳过此步意味着题目可能被完全理解错。**
+
+用 mental simulation（心算/手算）将 sample_cases 中的每组样例代入 solutionCode 模拟运行：
+
+1. 按 solutionCode 的输入解析逻辑，逐行读取 sample_cases 的 input
+2. 按 solutionCode 的算法逻辑，计算出每一步的中间值
+3. 对比最终输出与 sample_cases 的 expectedOutput
+
+**如果两者不一致**：
+- 说明 solutionCode 的算法逻辑或输入解析有误
+- 必须回到第二步重新分析题意并修正代码
+- 重复此验证步骤，直到所有样例都通过
+
+**如果两者一致**：
+- solutionCode 验证通过，输出 JSON
+
+---
+
+## 【校验清单】
+
+- [ ] solutionCode 的输入解析逻辑严格遵循题目 inputDesc 格式
+- [ ] 已用 sample_cases 验证 solutionCode：每个样例的 output 与 expectedOutput 完全一致
+- [ ] 若验证不通过，已修正 solutionCode 并重新验证
+- [ ] solutionCode 可编译（无语法错误）
+- [ ] JSON 格式正确，无多余逗号、括号匹配
+
+---
+
+## 【禁止事项】
+
+- 禁止跳过验证步骤直接输出 solutionCode
+- 禁止在 solutionCode 验证不通过的情况下输出 JSON
+- 禁止生成 generatorCode、expectedOutput 或任何其他字段
+- 禁止输出任何解释、注释或非 JSON 内容
+- 禁止使用 JDK 标准库以外的任何依赖
+- **【最高优先级】禁止在代码中出现 `package` 声明**
+- **【最高优先级】类名必须是 `Main`**
+
+---
+
+## 【题目信息】
+
+problem_description：
+
+{{problem_description}}
+
+---
+
+sample_cases：
+
+{{sample_cases}}
