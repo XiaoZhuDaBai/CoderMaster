@@ -1,7 +1,7 @@
 package xiaozhu.ai.service.chat;
 
 
-import dev.langchain4j.model.chat.StreamingChatLanguageModel;
+import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.service.AiServices;
 import dev.langchain4j.service.TokenStream;
 import lombok.extern.slf4j.Slf4j;
@@ -24,13 +24,13 @@ public class ChatServiceImpl implements ChatService {
     private final AlgorithmAnsweringAiService reasoningStreamingService;
 
     public ChatServiceImpl(
-            @Qualifier("streamingChatModelPrototype") StreamingChatLanguageModel streamingChatModel,
-            @Qualifier("reasoningStreamingChatModelPrototype") StreamingChatLanguageModel reasoningStreamingChatModel) {
+            @Qualifier("streamingChatModelPrototype") StreamingChatModel streamingChatModel,
+            @Qualifier("reasoningStreamingChatModelPrototype") StreamingChatModel reasoningStreamingChatModel) {
         this.normalStreamingService = AiServices.builder(AlgorithmAnsweringAiService.class)
-                .streamingChatLanguageModel(streamingChatModel)
+                .streamingChatModel(streamingChatModel)
                 .build();
         this.reasoningStreamingService = AiServices.builder(AlgorithmAnsweringAiService.class)
-                .streamingChatLanguageModel(reasoningStreamingChatModel)
+                .streamingChatModel(reasoningStreamingChatModel)
                 .build();
     }
 

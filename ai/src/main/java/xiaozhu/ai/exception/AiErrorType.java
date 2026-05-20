@@ -22,7 +22,9 @@ public enum AiErrorType {
 
     // ========== 通用错误 ==========
     UNKNOWN_ERROR("未知错误", true),
-    AI_GENERATION_FAILED_AFTER_RETRY("AI 生成重试全部失败", false);
+    AI_GENERATION_FAILED_AFTER_RETRY("AI 生成重试全部失败", false),
+    TOKEN_BUDGET_EXCEEDED("Token 预算超限", false),
+    CROSS_VALIDATION_FAILED("交叉验证未通过（AI 模型语义理解存在分歧）", false);
 
     private final String description;
     private final boolean retryable;  // 是否可重试

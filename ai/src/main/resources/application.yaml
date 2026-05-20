@@ -1,11 +1,14 @@
 spring:
   application:
     name: oj-ai
-  config:
-    import: optional:file:./ai-logback-spring.xml
   output:
     ansi:
       enabled: always
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3307}/oj_problem?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai
+    username: ${DB_USER:root}
+    password: ${DB_PASSWORD:}
   cloud:
     nacos:
       discovery:
@@ -48,10 +51,10 @@ langchain4j:
     chat-model:
       base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com/v1}
       api-key: ${DEEPSEEK_API_KEY:}
-      model-name: deepseek-chat
+      model-name: deepseek-v4-flash
       max-tokens: 8192
-      temperature: 1.5
-      log-requests: true
+      temperature: 1.0
+      log-requests: false
       log-responses: false
       max-retries: 3
       test-case-connect-timeout-seconds: 60
@@ -60,10 +63,10 @@ langchain4j:
     reasoning-chat-model:
       base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com/v1}
       api-key: ${DEEPSEEK_API_KEY:}
-      model-name: deepseek-reasoner
+      model-name: deepseek-v4-pro
       max-tokens: 32768
       temperature: 0.1
-      log-requests: true
+      log-requests: false
       log-responses: false
       max-retries: 3
       test-case-connect-timeout-seconds: 60
@@ -72,31 +75,46 @@ langchain4j:
     streaming-chat-model:
       base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com/v1}
       api-key: ${DEEPSEEK_API_KEY:}
-      model-name: deepseek-chat
+      model-name: deepseek-v4-flash
       max-tokens: 8192
       temperature: 0.8
-      log-requests: true
+      log-requests: false
       log-responses: true
     reasoning-streaming-chat-model:
       base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com/v1}
       api-key: ${DEEPSEEK_API_KEY:}
-      model-name: deepseek-reasoner
+      model-name: deepseek-v4-pro
       max-tokens: 32768
       temperature: 0.01
-      log-requests: true
+      log-requests: false
       log-responses: true
     test-case-chat-model:
       base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com/v1}
       api-key: ${DEEPSEEK_API_KEY:}
-      model-name: deepseek-chat
+      model-name: deepseek-v4-flash
       max-tokens: 8192
       temperature: 0.5
-      log-requests: true
+      log-requests: false
       log-responses: false
       max-retries: 3
       test-case-connect-timeout-seconds: 60
       test-case-read-timeout-seconds: 240
       test-case-request-timeout-seconds: 300
+    # ========== 交叉验证专用模型 ==========
+    # 用于对 solutionCode 做语义层面的二次验证，打破"同一模型既生成又验证"的循环依赖
+    # 推荐使用与主 Agent 不同的模型系列，例如：
+    #   - 主 Agent: deepseek-chat / deepseek-reasoner
+    #   - 交叉验证: qwen-plus / qwen-max / 智谱 GLM-4 / Kimi 等
+    cross-validation-chat-model:
+      base-url: ${CROSS_VALIDATION_BASE_URL:${QWEN_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}}
+      api-key: ${CROSS_VALIDATION_API_KEY:${QWEN_API_KEY:}}
+      model-name: ${CROSS_VALIDATION_MODEL_NAME:qwen-plus}
+      max-tokens: 8192
+      temperature: 0.3
+      log-requests: false
+      log-responses: false
+      max-retries: 2
+      request-timeout-seconds: 120
 
 management:
   endpoints:
@@ -115,15 +133,35 @@ management:
         enabled: true
 
 ai:
+  agent:
+    enabled: true
+    max-iterations: 10
+    # maxSequentialToolsInvocations = maxIterations * 2，足够支持完整的测试用例生成流程
+    mode: REACT
+    short-term-memory-ttl-seconds: 3600
+    record-success-cases: true
+    record-failure-cases: true
+    review-pass-threshold: 60
+    max-token-budget-per-generation: 500000
+    max-consecutive-verify-failures: 2
+    cross-validation:
+      # 默认关闭，因为会增加 AI 调用成本和延迟
+      enabled: true
+      # 推荐使用不同模型系列以最大化视角差异：
+      # 主 Agent 用 deepseek-chat，交叉验证用 qwen-plus 等
+      # 留空则使用 deepseek-chat（与主 Agent 相同模型但独立实例）
+      model-type: deepseek-chat
+      strictness: normal
+      trigger-mode: always
+      independent-case-count: 2
+      enable-in-pre-verification: true
+      enable-post-validation: false
+      trigger-after-consecutive-fails: 1
+      # 强烈建议先关闭（false），观察分歧率后再决定是否开启
+      enforce-pass: false
   testcase:
     use-v2-model: true
     generation:
       max-retries: 3
       retry-delay-ms: 2000
       retry-backoff-multiplier: 2.0
-
-spring-retry:
-  max-attempts: 3
-  initial-interval-ms: 2000
-  multiplier: 2.0
-  max-interval-ms: 10000

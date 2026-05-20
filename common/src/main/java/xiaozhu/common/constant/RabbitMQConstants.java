@@ -33,5 +33,10 @@ public final class RabbitMQConstants {
     public static final String DLX_EXCHANGE = "judge.dlx";
     public static final String DLX_QUEUE = "judge.dlx.queue";
     public static final String DLX_ROUTING_KEY = "judge.dlx.routing.key";
+
+    // 题目自带 expectedOutput 修正事件（双AI交叉验证发现错误时通知 problem-service）
+    public static final String PROBLEM_EXPECTED_OUTPUT_FIX_EXCHANGE = "problem.expected-output-fix.exchange";
+    public static final String PROBLEM_EXPECTED_OUTPUT_FIX_QUEUE = "problem.expected-output-fix.queue";
+    public static final String PROBLEM_EXPECTED_OUTPUT_FIX_ROUTING_KEY = "problem.expected-output-fix.routing.key";
 }
 

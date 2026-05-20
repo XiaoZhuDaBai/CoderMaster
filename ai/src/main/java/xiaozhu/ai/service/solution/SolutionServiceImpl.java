@@ -3,7 +3,7 @@ package xiaozhu.ai.service.solution;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.text.CharSequenceUtil;
 import cn.hutool.core.util.StrUtil;
-import dev.langchain4j.model.chat.StreamingChatLanguageModel;
+import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.service.AiServices;
 import dev.langchain4j.service.TokenStream;
@@ -33,15 +33,15 @@ import java.util.stream.Collectors;
 @Service
 public class SolutionServiceImpl implements SolutionService {
 
-    private final StreamingChatLanguageModel reasoningStreamingChatModel;
+    private final StreamingChatModel reasoningStreamingChatModel;
     private final SolutionGenerationAiService solutionGenerationAiService;
 
     public SolutionServiceImpl(
             @Qualifier("reasoningStreamingChatModelPrototype")
-            StreamingChatLanguageModel reasoningStreamingChatModel) {
+            StreamingChatModel reasoningStreamingChatModel) {
         this.reasoningStreamingChatModel = reasoningStreamingChatModel;
         this.solutionGenerationAiService = AiServices.builder(SolutionGenerationAiService.class)
-                .streamingChatLanguageModel(reasoningStreamingChatModel)
+                .streamingChatModel(reasoningStreamingChatModel)
                 .build();
     }
 

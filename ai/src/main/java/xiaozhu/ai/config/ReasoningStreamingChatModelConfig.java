@@ -1,6 +1,7 @@
 package xiaozhu.ai.config;
 
-import dev.langchain4j.model.chat.StreamingChatLanguageModel;
+
+import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.listener.ChatModelListener;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import lombok.Data;
@@ -41,7 +42,7 @@ public class ReasoningStreamingChatModelConfig {
      */
     @Bean
     @Scope("prototype")
-    public StreamingChatLanguageModel reasoningStreamingChatModelPrototype(List<ChatModelListener> chatModelListeners) {
+    public StreamingChatModel reasoningStreamingChatModelPrototype(List<ChatModelListener> chatModelListeners) {
         return OpenAiStreamingChatModel.builder()
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)

@@ -25,6 +25,7 @@ import static java.util.concurrent.TimeUnit.HOURS;
 public class ProblemDeliveryServiceImpl implements ProblemDeliveryService {
 
     private static final long CACHE_TTL_DAYS = 7L;
+    private static final long DETAIL_TTL_DAYS = 30L;
     private static final long NEW_PROBLEM_THRESHOLD_HOURS = 24L;
 
     private final RedisTemplate<String, Object> redisTemplate;
@@ -61,92 +62,94 @@ public class ProblemDeliveryServiceImpl implements ProblemDeliveryService {
 
     @Override
     public List<ProblemGenerationResponse> listProblems(String userKey) {
-        String deliveryKey = buildDeliveryKey(userKey);
-        List<Object> values = redisTemplate.opsForHash().values(deliveryKey);
-        if (CollectionUtils.isEmpty(values)) {
+        // 1. 从索引获取 contentHash 列表
+        Set<Object> hashes = redisTemplate.opsForSet().members(buildIndexKey(userKey));
+        if (CollectionUtils.isEmpty(hashes)) {
             loadFromIndex(userKey);
-            values = redisTemplate.opsForHash().values(deliveryKey);
+            hashes = redisTemplate.opsForSet().members(buildIndexKey(userKey));
         }
-        if (CollectionUtils.isEmpty(values)) {
+        if (CollectionUtils.isEmpty(hashes)) {
             return Collections.emptyList();
         }
-        return values.stream()
-                .map(this::convertToProblem)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toList());
+
+        // 2. 按需读取每个题目的详情
+        List<ProblemGenerationResponse> result = new ArrayList<>();
+        for (Object hashObj : hashes) {
+            String hash = hashObj.toString();
+            ProblemGenerationResponse problem = getProblemDetail(hash);
+            if (problem != null) {
+                result.add(problem);
+            }
+        }
+        return result;
     }
 
     @Override
     public List<ProblemGenerationResponse> listProblemsSorted(String userKey) {
-        String deliveryKey = buildDeliveryKey(userKey);
-        Map<Object, Object> problemEntries = redisTemplate.opsForHash().entries(deliveryKey);
-        if (CollectionUtils.isEmpty(problemEntries)) {
+        // 1. 从索引获取 contentHash 列表
+        Set<Object> hashes = redisTemplate.opsForSet().members(buildIndexKey(userKey));
+        if (CollectionUtils.isEmpty(hashes)) {
             loadFromIndex(userKey);
-            problemEntries = redisTemplate.opsForHash().entries(deliveryKey);
+            hashes = redisTemplate.opsForSet().members(buildIndexKey(userKey));
         }
-        if (CollectionUtils.isEmpty(problemEntries)) {
+        if (CollectionUtils.isEmpty(hashes)) {
             return Collections.emptyList();
         }
 
-        List<String> hashStrings = problemEntries.keySet().stream()
+        List<String> hashList = hashes.stream()
                 .filter(Objects::nonNull)
                 .map(Object::toString)
                 .toList();
 
-        String timeKey = buildProblemTimeKey(userKey);
-        List<Object> timeObjects = redisTemplate.opsForHash().multiGet(timeKey, (Collection<Object>) (Collection<?>) hashStrings);
+        // 2. 获取时间戳
+        String timeKey = buildTimeKey(userKey);
+        List<Object> timeObjects = redisTemplate.opsForHash().multiGet(timeKey, new ArrayList<>(hashList));
 
+        // 3. 按需读取每个题目的详情
         List<ProblemWithTime> problemsWithTime = new ArrayList<>();
-        for (int i = 0; i < hashStrings.size(); i++) {
-            String hash = hashStrings.get(i);
-            Object problemObj = problemEntries.get(hash);
-            Object timeObj = timeObjects.get(i);
-            ProblemGenerationResponse resp = convertToProblem(problemObj);
+        for (int i = 0; i < hashList.size(); i++) {
+            String hash = hashList.get(i);
+            long time = parseTime(timeObjects.get(i), hash);
+            ProblemGenerationResponse resp = getProblemDetail(hash);
             if (resp != null) {
-                long time = parseTime(timeObj, hash);
                 problemsWithTime.add(new ProblemWithTime(resp, time));
             }
         }
 
+        // 4. 按时间排序
         problemsWithTime.sort(Comparator.comparingLong((ProblemWithTime p) -> p.time).reversed());
         return problemsWithTime.stream().map(p -> p.response).collect(Collectors.toList());
     }
 
     @Override
     public List<ProblemGenerationResponse> listNewProblems(String userKey) {
-        String deliveryKey = buildNewDeliveryKey(userKey);
-        Set<Object> hashKeys = redisTemplate.opsForHash().keys(deliveryKey);
+        String newKey = buildNewKey(userKey);
+        Set<Object> hashKeys = redisTemplate.opsForSet().members(newKey);
         if (CollectionUtils.isEmpty(hashKeys)) {
             return Collections.emptyList();
         }
 
-        List<String> hashStrings = hashKeys.stream()
+        List<String> hashList = hashKeys.stream()
                 .filter(Objects::nonNull)
                 .map(Object::toString)
                 .toList();
 
-        if (hashStrings.isEmpty()) {
-            return Collections.emptyList();
-        }
-
         long now = Instant.now().toEpochMilli();
         long threshold = now - HOURS.toMillis(NEW_PROBLEM_THRESHOLD_HOURS);
-        String timeKey = buildProblemTimeKey(userKey);
+        String timeKey = buildTimeKey(userKey);
 
-        List<Object> problemObjects = redisTemplate.opsForHash().multiGet(deliveryKey, (Collection<Object>) (Collection<?>) hashStrings);
-        List<Object> timeObjects = redisTemplate.opsForHash().multiGet(timeKey, (Collection<Object>) (Collection<?>) hashStrings);
+        List<Object> timeObjects = redisTemplate.opsForHash().multiGet(timeKey, new ArrayList<>(hashList));
 
         List<ProblemGenerationResponse> result = new ArrayList<>();
-        for (int i = 0; i < hashStrings.size(); i++) {
-            String hash = hashStrings.get(i);
-            Object problemObj = problemObjects.get(i);
+        for (int i = 0; i < hashList.size(); i++) {
+            String hash = hashList.get(i);
             Object timeObj = timeObjects.get(i);
             if (timeObj == null) {
                 continue;
             }
             long generatedAt = parseTime(timeObj, hash);
             if (generatedAt > 0 && generatedAt >= threshold) {
-                ProblemGenerationResponse resp = convertToProblem(problemObj);
+                ProblemGenerationResponse resp = getProblemDetail(hash);
                 if (resp != null) {
                     result.add(resp);
                 }
@@ -176,6 +179,36 @@ public class ProblemDeliveryServiceImpl implements ProblemDeliveryService {
         );
     }
 
+    /**
+     * 按需获取题目详情，Key 失效时自动回源到 MySQL
+     */
+    private ProblemGenerationResponse getProblemDetail(String contentHash) {
+        String detailKey = buildDetailKey(contentHash);
+        Object cached = redisTemplate.opsForValue().get(detailKey);
+        if (cached != null) {
+            return convertToProblem(cached);
+        }
+
+        // Key 失效，回源到 MySQL
+        log.info("题目详情 Key 失效，开始回源，contentHash={}", contentHash);
+        Question question = questionMapper.selectOne(
+            new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Question>()
+                .eq(Question::getContentHash, contentHash)
+        );
+        if (question == null) {
+            log.warn("MySQL 中也不存在该题目，contentHash={}", contentHash);
+            return null;
+        }
+
+        ProblemGenerationResponse response = convertQuestionToResponse(question);
+
+        // 回写 Redis，详情独立 TTL
+        redisTemplate.opsForValue().set(detailKey, response, DETAIL_TTL_DAYS, DAYS);
+        log.info("题目详情已回写 Redis，contentHash={}", contentHash);
+
+        return response;
+    }
+
     private void loadFromIndex(String userKey) {
         String indexKey = RedisKeyConstant.QUESTION_USER_INDEX_PREFIX + userKey;
         Set<Object> hashes = redisTemplate.opsForSet().members(indexKey);
@@ -190,18 +223,26 @@ public class ProblemDeliveryServiceImpl implements ProblemDeliveryService {
 
     private void saveToDeliveryBucket(String userKey, String contentHash,
             ProblemGenerationResponse response, boolean isNew, long generatedAt) {
-        String totalDeliveryKey = buildDeliveryKey(userKey);
-        redisTemplate.opsForHash().put(totalDeliveryKey, contentHash, response);
-        redisTemplate.expire(totalDeliveryKey, CACHE_TTL_DAYS, DAYS);
+        // 1. 写入索引 Set
+        String indexKey = buildIndexKey(userKey);
+        redisTemplate.opsForSet().add(indexKey, contentHash);
 
-        String deliveryKey = isNew ? buildNewDeliveryKey(userKey) : buildOldDeliveryKey(userKey);
-        redisTemplate.opsForHash().put(deliveryKey, contentHash, response);
-        redisTemplate.expire(deliveryKey, CACHE_TTL_DAYS, DAYS);
+        // 2. 写入详情 Key（各自独立 TTL）
+        String detailKey = buildDetailKey(contentHash);
+        redisTemplate.opsForValue().set(detailKey, response, DETAIL_TTL_DAYS, DAYS);
 
+        // 3. 写入时间戳 Hash
         if (generatedAt > 0) {
-            String timeKey = buildProblemTimeKey(userKey);
+            String timeKey = buildTimeKey(userKey);
             redisTemplate.opsForHash().put(timeKey, contentHash, generatedAt);
             redisTemplate.expire(timeKey, CACHE_TTL_DAYS, DAYS);
+        }
+
+        // 4. 新题标识 Set
+        if (isNew) {
+            String newKey = buildNewKey(userKey);
+            redisTemplate.opsForSet().add(newKey, contentHash);
+            redisTemplate.expire(newKey, NEW_PROBLEM_THRESHOLD_HOURS, HOURS);
         }
 
         log.info("题目已写入传输区，userKey={}, contentHash={}, isNew={}, generatedAt={}",
@@ -261,24 +302,26 @@ public class ProblemDeliveryServiceImpl implements ProblemDeliveryService {
         return response;
     }
 
+    // ==================== Key 构建方法 ====================
+
     private String buildProblemKey(String userKey, String contentHash) {
         return RedisKeyConstant.QUESTION_PREFIX + userKey + ":" + contentHash;
     }
 
-    private String buildDeliveryKey(String userKey) {
-        return RedisKeyConstant.QUESTION_DELIVERY_PREFIX + userKey;
+    private String buildIndexKey(String userKey) {
+        return RedisKeyConstant.QUESTION_DELIVERY_PREFIX + "index:" + userKey;
     }
 
-    private String buildNewDeliveryKey(String userKey) {
-        return RedisKeyConstant.QUESTION_DELIVERY_PREFIX + "new:" + userKey;
+    private String buildDetailKey(String contentHash) {
+        return RedisKeyConstant.QUESTION_DELIVERY_PREFIX + "detail:" + contentHash;
     }
 
-    private String buildOldDeliveryKey(String userKey) {
-        return RedisKeyConstant.QUESTION_DELIVERY_PREFIX + "old:" + userKey;
-    }
-
-    private String buildProblemTimeKey(String userKey) {
+    private String buildTimeKey(String userKey) {
         return RedisKeyConstant.QUESTION_DELIVERY_PREFIX + "time:" + userKey;
+    }
+
+    private String buildNewKey(String userKey) {
+        return RedisKeyConstant.QUESTION_DELIVERY_PREFIX + "new:" + userKey;
     }
 
     private boolean hasText(String str) {

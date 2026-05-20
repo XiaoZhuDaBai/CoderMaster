@@ -1,6 +1,6 @@
 package xiaozhu.ai.config;
 
-import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.listener.ChatModelListener;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import lombok.Data;
@@ -45,7 +45,7 @@ public class ChatModelConfig {
      */
     @Bean
     @Scope("prototype")
-    public ChatLanguageModel chatModelPrototype(List<ChatModelListener> chatModelListeners) {
+    public ChatModel chatModelPrototype(List<ChatModelListener> chatModelListeners) {
         OpenAiChatModel.OpenAiChatModelBuilder builder = OpenAiChatModel.builder()
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)
@@ -59,6 +59,23 @@ public class ChatModelConfig {
         if (maxRetries != null && maxRetries > 0) {
             builder.maxRetries(maxRetries);
         }
+        
+        // 禁用 thinking/reasoning 模式，避免 DeepSeek 返回 reasoning_content 导致的错误
+        // langchain4j 1.14.0+ 支持 returnThinking() 方法
+        builder.returnThinking(false);
+        
+        // DeepSeek API: 使用 reasoningEffort 参数控制思考模式
+        // 设置为 "low" 或 "medium" 可以限制 thinking 长度，或设置 null 禁用
+        builder.reasoningEffort(null);
+        
+        // DeepSeek 兼容: 通过 customParameters 传递 thinking 禁用
+        // DeepSeek API 文档要求: thinking.type = "disabled" 禁用思考模式
+        java.util.Map<String, Object> thinkingConfig = new java.util.HashMap<>();
+        thinkingConfig.put("type", "disabled");
+        java.util.Map<String, Object> customParams = new java.util.HashMap<>();
+        customParams.put("thinking", thinkingConfig);
+        builder.customParameters(customParams);
+        
         return builder.build();
     }
 

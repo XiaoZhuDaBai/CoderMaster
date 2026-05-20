@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.core.task.TaskExecutor;
-import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.model.chat.ChatModel;
 import xiaozhu.ai.metrics.AiMetricsService;
 import xiaozhu.common.dto.ProblemGenerationResponse;
 import xiaozhu.common.dto.TestCaseGenerationResponse;
@@ -26,7 +26,7 @@ class TestCasesGenerationMessageConsumerTest {
     private TaskExecutor testCaseGenerationExecutor;
 
     @Mock
-    private ChatLanguageModel testCaseChatModel;
+    private ChatModel testCaseChatModel;
 
     @Mock
     private AiMetricsService aiMetricsService;

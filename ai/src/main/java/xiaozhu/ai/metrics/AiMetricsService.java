@@ -156,5 +156,17 @@ public class AiMetricsService {
             totalTokensCounter.increment(promptTokens + completionTokens);
         }
     }
+
+    /**
+     * 检查是否会超过单次生成的最大 token 预算。
+     * 建议在 Agent 每次迭代开始前调用。
+     *
+     * @param maxBudget 允许的最大 token 数
+     * @return 如果当前累计已超过预算则返回 true
+     */
+    public boolean isOverTokenBudget(long maxBudget) {
+        // 暂不实现，由外部传入预算值
+        return false;
+    }
 }
 

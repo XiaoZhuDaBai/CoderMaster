@@ -27,12 +27,20 @@ import xiaozhu.submission.service.SubmissionService;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class SubmissionServiceImpl implements SubmissionService {
+
+    private static final String SUBMISSION_STATUS_PREFIX = "submission:status:";
+    private static final Duration SUBMISSION_STATUS_TTL = Duration.ofMinutes(30);
 
     private final SubmissionMapper submissionMapper;
 
@@ -45,15 +53,12 @@ public class SubmissionServiceImpl implements SubmissionService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public SubmissionResponse createSubmission(SubmissionCreateRequest request) {
-        // 解析题目 ID（支持数字 / 哈希 / 快照）
         Long questionId = resolveQuestionId(request.getQuestionId(), request.getContentHash(), request.getQuestionSnapshot());
         if (questionId == null) {
             throw new IllegalArgumentException("题目信息缺失，无法解析 questionId");
         }
 
-        // 把请求对象变成提交对象
         Submission submission = getSubmission(request, questionId);
-
         submissionMapper.insert(submission);
 
         JudgeTaskMessage message = JudgeTaskMessage.builder()
@@ -78,10 +83,8 @@ public class SubmissionServiceImpl implements SubmissionService {
 
     @Override
     public String forwardRunCase(RunCaseRequest request) {
-        // 根据请求内容生成稳定的 requestId，用于命中缓存
         String requestId = buildRunCaseRequestId(request);
 
-        // 先查 Redis，如果已有结果，直接返回相同 requestId，前端轮询会立即命中缓存，不再重复判题
         String cacheKey = buildRunCaseResultKey(requestId);
         Object cache = redisTemplate.opsForValue().get(cacheKey);
         if (cache instanceof RunCaseResultResponse) {
@@ -110,7 +113,6 @@ public class SubmissionServiceImpl implements SubmissionService {
     @Override
     public void applyJudgeResult(JudgeResultMessage resultMessage) {
         if (resultMessage.getSubmissionId() == null) {
-            // 运行案例结果，写入 Redis，TTL 24 小时
             RunCaseResultResponse response = new RunCaseResultResponse(
                     resultMessage.getRequestId(),
                     resultMessage.getJudgeStatus(),
@@ -123,6 +125,20 @@ public class SubmissionServiceImpl implements SubmissionService {
             redisTemplate.opsForValue().set(key, response, Duration.ofHours(24));
             return;
         }
+
+        // 幂等处理：检查是否为终态
+        if (isTerminalStatus(resultMessage.getJudgeStatus())) {
+            Submission current = submissionMapper.selectById(resultMessage.getSubmissionId());
+            if (current != null && isTerminalStatus(current.getJudgeStatus())) {
+                log.warn("重复判题结果，跳过更新，submissionId={}", resultMessage.getSubmissionId());
+                return;
+            }
+        }
+
+        // 1. 写 Redis（优先）
+        writeSubmissionStatusToRedis(resultMessage);
+
+        // 2. 写 MySQL
         LambdaUpdateWrapper<Submission> wrapper = Wrappers.lambdaUpdate();
         wrapper.eq(Submission::getSubmissionId, resultMessage.getSubmissionId())
                 .set(resultMessage.getJudgeStatus() != null, Submission::getJudgeStatus, resultMessage.getJudgeStatus())
@@ -136,12 +152,31 @@ public class SubmissionServiceImpl implements SubmissionService {
         submissionMapper.update(null, wrapper);
     }
 
+    private boolean isTerminalStatus(JudgeStatus status) {
+        return status != null && (status == JudgeStatus.AC || status == JudgeStatus.WA
+                || status == JudgeStatus.TLE || status == JudgeStatus.MLE
+                || status == JudgeStatus.RE || status == JudgeStatus.CE
+                || status == JudgeStatus.SYSTEM_ERROR);
+    }
+
     @Override
     public SubmissionResponse getSubmission(Long submissionId) {
+        // 1. 优先查 Redis
+        SubmissionResponse cached = getSubmissionStatusFromRedis(submissionId);
+        if (cached != null) {
+            log.debug("从Redis获取提交结果，submissionId={}", submissionId);
+            return cached;
+        }
+
+        // 2. Redis 未命中，查 MySQL
         Submission submission = submissionMapper.selectById(submissionId);
         if (submission == null) {
             return null;
         }
+
+        // 3. 回写 Redis
+        writeSubmissionStatusToRedisFromSubmission(submission);
+
         return buildSubmissionResponse(submission);
     }
 
@@ -154,6 +189,184 @@ public class SubmissionServiceImpl implements SubmissionService {
         }
         return null;
     }
+
+    // ==================== Redis 缓存辅助方法 ====================
+
+    private String buildSubmissionStatusKey(Long submissionId) {
+        return SUBMISSION_STATUS_PREFIX + submissionId;
+    }
+
+    private void writeSubmissionStatusToRedis(JudgeResultMessage resultMessage) {
+        try {
+            String key = buildSubmissionStatusKey(resultMessage.getSubmissionId());
+            Map<String, Object> status = new HashMap<>();
+            if (resultMessage.getJudgeStatus() != null) {
+                status.put("judgeStatus", resultMessage.getJudgeStatus().name());
+            }
+            if (resultMessage.getTotalCases() != null) {
+                status.put("totalCases", resultMessage.getTotalCases());
+            }
+            if (resultMessage.getPassedCases() != null) {
+                status.put("passedCases", resultMessage.getPassedCases());
+            }
+            if (resultMessage.getTimeCost() != null) {
+                status.put("timeCost", resultMessage.getTimeCost());
+            }
+            if (resultMessage.getMemoryCost() != null) {
+                status.put("memoryCost", resultMessage.getMemoryCost());
+            }
+            if (resultMessage.getErrorMessage() != null) {
+                status.put("errorMessage", resultMessage.getErrorMessage());
+            }
+            if (resultMessage.getJudgeResult() != null) {
+                status.put("judgeResult", resultMessage.getJudgeResult());
+            }
+            if (resultMessage.getOutputList() != null) {
+                status.put("outputList", resultMessage.getOutputList());
+            }
+            // 统一使用时间戳存储
+            status.put("judgeTime", resultMessage.getJudgeTime() == null
+                    ? System.currentTimeMillis()
+                    : resultMessage.getJudgeTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli());
+
+            redisTemplate.opsForHash().putAll(key, status);
+            redisTemplate.expire(key, SUBMISSION_STATUS_TTL);
+            log.debug("判题结果已写入Redis，submissionId={}", resultMessage.getSubmissionId());
+        } catch (Exception e) {
+            log.warn("写Redis缓存失败，submissionId={}, error={}", resultMessage.getSubmissionId(), e.getMessage());
+        }
+    }
+
+    private void writeSubmissionStatusToRedisFromSubmission(Submission submission) {
+        try {
+            String key = buildSubmissionStatusKey(submission.getSubmissionId());
+            Map<String, Object> status = new HashMap<>();
+            if (submission.getJudgeStatus() != null) {
+                status.put("judgeStatus", submission.getJudgeStatus().name());
+            }
+            if (submission.getTotalCases() != null) {
+                status.put("totalCases", submission.getTotalCases());
+            }
+            if (submission.getPassedCases() != null) {
+                status.put("passedCases", submission.getPassedCases());
+            }
+            if (submission.getTimeCost() != null) {
+                status.put("timeCost", submission.getTimeCost());
+            }
+            if (submission.getMemoryCost() != null) {
+                status.put("memoryCost", submission.getMemoryCost());
+            }
+            if (submission.getErrorMessage() != null) {
+                status.put("errorMessage", submission.getErrorMessage());
+            }
+            if (submission.getJudgeResult() != null) {
+                status.put("judgeResult", submission.getJudgeResult());
+            }
+            if (submission.getJudgeTime() != null) {
+                status.put("judgeTime", submission.getJudgeTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli());
+            }
+            if (submission.getUserId() != null) {
+                status.put("userId", submission.getUserId());
+            }
+            if (submission.getQuestionId() != null) {
+                status.put("questionId", submission.getQuestionId());
+            }
+            if (submission.getLanguage() != null) {
+                status.put("language", submission.getLanguage());
+            }
+
+            redisTemplate.opsForHash().putAll(key, status);
+            redisTemplate.expire(key, SUBMISSION_STATUS_TTL);
+        } catch (Exception e) {
+            log.warn("写Redis缓存失败，submissionId={}, error={}", submission.getSubmissionId(), e.getMessage());
+        }
+    }
+
+    private SubmissionResponse getSubmissionStatusFromRedis(Long submissionId) {
+        try {
+            String key = buildSubmissionStatusKey(submissionId);
+            Map<Object, Object> cached = redisTemplate.opsForHash().entries(key);
+            if (cached.isEmpty()) {
+                return null;
+            }
+
+            SubmissionResponse response = new SubmissionResponse();
+            response.setSubmissionId(submissionId);
+
+            Object userId = cached.get("userId");
+            if (userId != null) {
+                response.setUserId(Long.valueOf(userId.toString()));
+            }
+
+            Object questionId = cached.get("questionId");
+            if (questionId != null) {
+                response.setQuestionId(Long.valueOf(questionId.toString()));
+            }
+
+            Object language = cached.get("language");
+            if (language != null) {
+                response.setLanguage(language.toString());
+            }
+
+            Object judgeStatus = cached.get("judgeStatus");
+            if (judgeStatus != null) {
+                response.setJudgeStatus(JudgeStatus.valueOf(judgeStatus.toString()));
+            }
+
+            Object judgeResult = cached.get("judgeResult");
+            if (judgeResult != null) {
+                response.setJudgeResult(judgeResult.toString());
+            }
+
+            Object totalCases = cached.get("totalCases");
+            if (totalCases != null) {
+                response.setTotalCases(Integer.valueOf(totalCases.toString()));
+            }
+
+            Object passedCases = cached.get("passedCases");
+            if (passedCases != null) {
+                response.setPassedCases(Integer.valueOf(passedCases.toString()));
+            }
+
+            Object timeCost = cached.get("timeCost");
+            if (timeCost != null) {
+                response.setTimeCost(Long.valueOf(timeCost.toString()));
+            }
+
+            Object memoryCost = cached.get("memoryCost");
+            if (memoryCost != null) {
+                response.setMemoryCost(Long.valueOf(memoryCost.toString()));
+            }
+
+            Object errorMessage = cached.get("errorMessage");
+            if (errorMessage != null) {
+                response.setErrorMessage(errorMessage.toString());
+            }
+
+            Object outputList = cached.get("outputList");
+            if (outputList instanceof List) {
+                response.setOutputList((List<String>) outputList);
+            }
+
+            Object judgeTime = cached.get("judgeTime");
+            if (judgeTime != null) {
+                long ts;
+                if (judgeTime instanceof Long) {
+                    ts = (Long) judgeTime;
+                } else {
+                    ts = Long.parseLong(judgeTime.toString());
+                }
+                response.setJudgeTime(LocalDateTime.ofInstant(Instant.ofEpochMilli(ts), ZoneId.systemDefault()));
+            }
+
+            return response;
+        } catch (Exception e) {
+            log.warn("读Redis缓存失败，submissionId={}, error={}", submissionId, e.getMessage());
+            return null;
+        }
+    }
+
+    // ==================== 其他辅助方法 ====================
 
     private Long resolveQuestionId(String questionIdentifier, String contentHash, String questionSnapshot) {
         String candidate = firstNonBlank(
@@ -217,9 +430,6 @@ public class SubmissionServiceImpl implements SubmissionService {
         return "run_case_result:" + requestId;
     }
 
-    /**
-     * 根据运行案例请求内容生成稳定的 requestId，便于相同请求命中缓存
-     */
     private String buildRunCaseRequestId(RunCaseRequest request) {
         String questionKey = firstNonBlank(
                 request.getQuestionId(),
@@ -238,6 +448,7 @@ public class SubmissionServiceImpl implements SubmissionService {
     private SubmissionResponse buildSubmissionResponse(Submission submission) {
         return new SubmissionResponse(
                 submission.getSubmissionId(),
+                submission.getUserId(),
                 submission.getQuestionId(),
                 submission.getLanguage(),
                 submission.getJudgeStatus(),
@@ -247,6 +458,7 @@ public class SubmissionServiceImpl implements SubmissionService {
                 submission.getTimeCost(),
                 submission.getMemoryCost(),
                 submission.getErrorMessage(),
+                null,
                 submission.getCreateTime(),
                 submission.getJudgeTime()
         );
@@ -262,4 +474,3 @@ public class SubmissionServiceImpl implements SubmissionService {
         return submission;
     }
 }
-

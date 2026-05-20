@@ -1,8 +1,6 @@
 package xiaozhu.ai.config;
 
-import dev.langchain4j.http.client.jdk.JdkHttpClient;
-import dev.langchain4j.http.client.jdk.JdkHttpClientBuilder;
-import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.listener.ChatModelListener;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import lombok.Data;
@@ -12,7 +10,9 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Scope;
 
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 专门用于生成测试用例的思考模型配置（DeepSeek Reasoner 等）
@@ -47,10 +47,8 @@ public class TestCaseReasoningChatModelConfig {
     private Integer maxRetries;
 
     /**
-     * 测试用例生成请求在 DeepSeek 上经常超过 60s，因此单独暴露连接/读取/请求超时配置
+     * 测试用例生成请求在 DeepSeek 上经常超过 60s，因此单独暴露超时配置
      */
-    private Integer testCaseConnectTimeoutSeconds = 60;
-    private Integer testCaseReadTimeoutSeconds = 240;
     private Integer testCaseRequestTimeoutSeconds = 300;
 
     /**
@@ -59,26 +57,13 @@ public class TestCaseReasoningChatModelConfig {
      */
     @Bean
     @Scope("prototype")
-    public ChatLanguageModel testCaseChatModelPrototype(List<ChatModelListener> chatModelListeners) {
-        Duration connectTimeout = Duration.ofSeconds(
-                testCaseConnectTimeoutSeconds != null && testCaseConnectTimeoutSeconds > 0
-                        ? testCaseConnectTimeoutSeconds
-                        : 60);
-        Duration readTimeout = Duration.ofSeconds(
-                testCaseReadTimeoutSeconds != null && testCaseReadTimeoutSeconds > 0
-                        ? testCaseReadTimeoutSeconds
-                        : 240);
+    public ChatModel testCaseChatModelPrototype(List<ChatModelListener> chatModelListeners) {
         Duration requestTimeout = Duration.ofSeconds(
                 testCaseRequestTimeoutSeconds != null && testCaseRequestTimeoutSeconds > 0
                         ? testCaseRequestTimeoutSeconds
                         : 300);
 
-        JdkHttpClientBuilder jdkHttpClientBuilder = JdkHttpClient.builder()
-                .connectTimeout(connectTimeout)
-                .readTimeout(readTimeout);
-
         OpenAiChatModel.OpenAiChatModelBuilder builder = OpenAiChatModel.builder()
-                .httpClientBuilder(jdkHttpClientBuilder)
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)
                 .modelName(modelName)
@@ -92,8 +77,20 @@ public class TestCaseReasoningChatModelConfig {
         if (maxRetries != null && maxRetries > 0) {
             builder.maxRetries(maxRetries);
         }
+        
+        // 禁用 thinking/reasoning 模式，避免 DeepSeek 返回 reasoning_content 导致的错误
+        builder.returnThinking(false);
+        
+        // DeepSeek API: 禁用 thinking 模式
+        builder.reasoningEffort(null);
+        
+        // DeepSeek 兼容: 通过 customParameters 传递 thinking 禁用
+        Map<String, Object> thinkingConfig = new HashMap<>();
+        thinkingConfig.put("type", "disabled");
+        Map<String, Object> customParams = new HashMap<>();
+        customParams.put("thinking", thinkingConfig);
+        builder.customParameters(customParams);
+        
         return builder.build();
     }
 }
-
-

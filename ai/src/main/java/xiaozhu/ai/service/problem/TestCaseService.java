@@ -17,7 +17,9 @@ public interface TestCaseService {
      * @param problem 题目信息
      * @return verified 测试用例
      * @throws xiaozhu.ai.exception.AiGenerationException 生成失败时抛出异常
+     * @deprecated 已废弃，请使用 {@link xiaozhu.ai.agent.service.TestCaseGenerationAgentService#generate}
      */
+    @Deprecated
     TestCaseGenerationResponse generateVerifiedTestCases(ProblemGenerationResponse problem);
 
     /**

@@ -44,6 +44,7 @@ public class ProblemGenerationRequest {
      * 题目类型：0-ACM，1-OI
      * 默认0（ACM模式）
      */
+    @Builder.Default
     private Integer questionType = 0;
 
     /**

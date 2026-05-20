@@ -119,8 +119,9 @@ public class TestCaseSyncServiceImpl implements TestCaseSyncService {
     private void updateDeliveryBucketWithTestCases(String userKey, String contentHash,
             List<TestCaseGenerationResponse.TestCaseDetail> testCases) {
         try {
-            String deliveryKey = RedisKeyConstant.QUESTION_DELIVERY_PREFIX + userKey;
-            Object raw = redisTemplate.opsForHash().get(deliveryKey, contentHash);
+            // 新结构：详情 Key
+            String detailKey = RedisKeyConstant.QUESTION_DELIVERY_PREFIX + "detail:" + contentHash;
+            Object raw = redisTemplate.opsForValue().get(detailKey);
             if (raw == null) {
                 log.warn("delivery bucket 中未找到题目，跳过追加测试用例，userKey={}, contentHash={}", userKey, contentHash);
                 return;
@@ -149,7 +150,7 @@ public class TestCaseSyncServiceImpl implements TestCaseSyncService {
                     .toList();
             problem.setTestCases(tcList);
 
-            redisTemplate.opsForHash().put(deliveryKey, contentHash, problem);
+            redisTemplate.opsForValue().set(detailKey, problem);
             log.info("delivery bucket 题目已追加测试用例，userKey={}, contentHash={}, count={}",
                     userKey, contentHash, testCases.size());
         } catch (Exception e) {

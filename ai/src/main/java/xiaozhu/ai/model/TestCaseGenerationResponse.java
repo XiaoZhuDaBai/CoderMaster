@@ -1,5 +1,6 @@
 package xiaozhu.ai.model;
 
+import com.alibaba.fastjson2.annotation.JSONField;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -50,6 +51,7 @@ public class TestCaseGenerationResponse {
         /**
          * 是否公开：0-隐藏，1-公开
          */
+        @JSONField(defaultValue = "0")
         private Integer isPublic;
         
         /**

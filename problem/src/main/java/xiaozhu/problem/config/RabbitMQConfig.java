@@ -51,6 +51,24 @@ public class RabbitMQConfig {
                 .with(RabbitMQConstants.TESTCASE_SYNC_ROUTING_KEY);
     }
 
+    // expectedOutput 修正事件队列（双AI交叉验证发现错误时通知）
+    @Bean
+    public DirectExchange expectedOutputFixExchange() {
+        return new DirectExchange(RabbitMQConstants.PROBLEM_EXPECTED_OUTPUT_FIX_EXCHANGE, true, false);
+    }
+
+    @Bean
+    public Queue expectedOutputFixQueue() {
+        return QueueBuilder.durable(RabbitMQConstants.PROBLEM_EXPECTED_OUTPUT_FIX_QUEUE).build();
+    }
+
+    @Bean
+    public Binding expectedOutputFixBinding() {
+        return BindingBuilder.bind(expectedOutputFixQueue())
+                .to(expectedOutputFixExchange())
+                .with(RabbitMQConstants.PROBLEM_EXPECTED_OUTPUT_FIX_ROUTING_KEY);
+    }
+
     @Bean
     public MessageConverter messageConverter() {
         return new Jackson2JsonMessageConverter();

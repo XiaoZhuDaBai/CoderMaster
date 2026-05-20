@@ -4,18 +4,18 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.DigestUtil;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONException;
-import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.service.AiServices;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.retry.annotation.Backoff;
-import org.springframework.retry.annotation.Recover;
-import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
+import xiaozhu.ai.config.TestCaseGenerationConfig;
 import xiaozhu.ai.exception.AiErrorType;
 import xiaozhu.ai.exception.AiGenerationException;
+import xiaozhu.ai.memory.CaseSearchService;
+import xiaozhu.ai.memory.FailureCase;
 import xiaozhu.ai.metrics.AiMetricsService;
 import xiaozhu.ai.model.SolutionCodeGenerationResponse;
 import xiaozhu.ai.model.VerifiedTestCaseGenerationResponse;
@@ -29,6 +29,7 @@ import xiaozhu.common.dto.SandboxExecuteResponse;
 import xiaozhu.common.dto.TestCaseGenerationResponse;
 import xiaozhu.common.feign.JudgeSandboxFeignClient;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -62,28 +63,34 @@ public class TestCaseServiceImpl implements TestCaseService {
     private final GeneratorCodeGenerationAiService generatorCodeGenerationAiService;
     private final AiMetricsService aiMetricsService;
     private final JudgeSandboxFeignClient judgeSandboxFeignClient;
+    private final CaseSearchService caseSearchService;
+    private final TestCaseGenerationConfig generationConfig;
 
     public TestCaseServiceImpl(
             RedisTemplate<String, Object> redisTemplate,
-            @Qualifier("testCaseChatModelPrototype") ChatLanguageModel testCaseChatModel,
-            @Qualifier("testCaseChatModelV2Prototype") ChatLanguageModel testCaseChatModelV2,
+            @Qualifier("testCaseChatModelPrototype") ChatModel testCaseChatModel,
+            @Qualifier("testCaseChatModelV2Prototype") ChatModel testCaseChatModelV2,
             @Value("${ai.testcase.use-v2-model:false}") boolean useV2Model,
             AiMetricsService aiMetricsService,
-            JudgeSandboxFeignClient judgeSandboxFeignClient) {
+            JudgeSandboxFeignClient judgeSandboxFeignClient,
+            CaseSearchService caseSearchService,
+            TestCaseGenerationConfig generationConfig) {
         this.redisTemplate = redisTemplate;
         this.aiMetricsService = aiMetricsService;
         this.judgeSandboxFeignClient = judgeSandboxFeignClient;
-        ChatLanguageModel effectiveModel = useV2Model ? testCaseChatModelV2 : testCaseChatModel;
+        this.caseSearchService = caseSearchService;
+        this.generationConfig = generationConfig;
+        ChatModel effectiveModel = useV2Model ? testCaseChatModelV2 : testCaseChatModel;
         log.info("[TestCaseServiceImpl] 初始化测试用例生成模型，useV2Model={}，实际使用={}",
                 useV2Model, effectiveModel.getClass().getSimpleName());
         VerifiedTestCaseGenerationAiService verifiedTestCaseGenerationAiService = AiServices.builder(VerifiedTestCaseGenerationAiService.class)
-                .chatLanguageModel(effectiveModel)
+                .chatModel(effectiveModel)
                 .build();
         this.solutionCodeGenerationAiService = AiServices.builder(SolutionCodeGenerationAiService.class)
-                .chatLanguageModel(effectiveModel)
+                .chatModel(effectiveModel)
                 .build();
         this.generatorCodeGenerationAiService = AiServices.builder(GeneratorCodeGenerationAiService.class)
-                .chatLanguageModel(effectiveModel)
+                .chatModel(effectiveModel)
                 .build();
     }
 
@@ -104,13 +111,61 @@ public class TestCaseServiceImpl implements TestCaseService {
      *
      * @param problem 题目信息
      * @return verified 测试用例
+     * @deprecated 已废弃，请使用 {@link xiaozhu.ai.agent.service.TestCaseGenerationAgentService#generate}
      */
-    @Retryable(
-            retryFor = AiGenerationException.class,
-            maxAttempts = 3,
-            backoff = @Backoff(delay = 2000, multiplier = 2.0)
-    )
+    @Deprecated
     public TestCaseGenerationResponse generateVerifiedTestCases(ProblemGenerationResponse problem) {
+        int maxRetries = generationConfig.getMaxRetries();
+        String lastError = null;
+        String lastSolutionCode = null;
+
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                log.info("[TestCaseServiceImpl] 第 {} 次尝试开始", attempt);
+                return generateWithRetryContext(problem, attempt > 1 ? lastError : null, lastSolutionCode);
+            } catch (AiGenerationException e) {
+                lastError = buildErrorContext(e);
+                lastSolutionCode = null;
+                log.warn("[TestCaseServiceImpl] 第 {} 次尝试失败: {} - {}", attempt, e.getErrorType(), e.getMessage());
+
+                // 记录失败案例
+                recordFailureCase(problem, null, e.getErrorType().name(), e.getMessage());
+
+                if (attempt < maxRetries) {
+                    // 指数退避
+                    try {
+                        long sleepTime = generationConfig.calculateDelayMs(attempt);
+                        log.info("[TestCaseServiceImpl] 等待 {}ms 后重试...", sleepTime);
+                        Thread.sleep(sleepTime);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new AiGenerationException(AiErrorType.UNKNOWN_ERROR, "重试被中断");
+                    }
+                }
+            }
+        }
+
+        // 所有重试都失败
+        aiMetricsService.recordAiCallError(AiErrorType.AI_GENERATION_FAILED_AFTER_RETRY.name());
+        throw new AiGenerationException(AiErrorType.AI_GENERATION_FAILED_AFTER_RETRY,
+                "重试全部失败");
+    }
+
+    /**
+     * 构建错误上下文摘要
+     */
+    private String buildErrorContext(AiGenerationException e) {
+        return String.format("错误类型: %s, 错误信息: %s",
+                e.getErrorType(), e.getMessage());
+    }
+
+    /**
+     * 带重试上下文的生成逻辑
+     */
+    private TestCaseGenerationResponse generateWithRetryContext(
+            ProblemGenerationResponse problem,
+            String lastError,
+            String lastSolutionCode) {
         long startTime = System.currentTimeMillis();
         String aiResponse1 = null;
         String aiResponse2 = null;
@@ -132,11 +187,15 @@ public class TestCaseServiceImpl implements TestCaseService {
             log.info("[TestCaseServiceImpl] ========== 阶段A 开始 ======== 题目={}", problemTitle);
             log.info("[TestCaseServiceImpl] 阶段A 开始调用 AI 生成 solutionCode...");
 
+            // 构建重试上下文
+            String retryContext = buildRetryContext(lastError, lastSolutionCode, problem);
+            String instruction = "请严格按照提示词要求生成JSON对象，solutionCode必须是完整可运行的Java代码。" + retryContext;
+
             long aiStartTime = System.currentTimeMillis();
             aiResponse1 = solutionCodeGenerationAiService.generateSolutionCode(
                     problemDesc,
                     sampleCases,
-                    "请严格按照提示词要求生成JSON对象，solutionCode必须是完整可运行的Java代码。"
+                    instruction
             );
             long aiDuration = System.currentTimeMillis() - aiStartTime;
             log.info("[TestCaseServiceImpl] 阶段A AI 调用完成，耗时={}ms，响应长度={}", aiDuration,
@@ -378,14 +437,6 @@ public class TestCaseServiceImpl implements TestCaseService {
             aiMetricsService.recordAiCallError(AiErrorType.UNKNOWN_ERROR.name());
             throw new AiGenerationException(AiErrorType.UNKNOWN_ERROR, "【沙箱验算模式】生成失败: " + e.getMessage());
         }
-    }
-
-    @Recover
-    public TestCaseGenerationResponse recoverFromGenerationFailure(AiGenerationException e, ProblemGenerationResponse problem) {
-        log.error("[TestCaseServiceImpl] 测试用例生成重试全部失败，最终异常: {} - {}",
-                e.getErrorType(), e.getMessage());
-        aiMetricsService.recordAiCallError(AiErrorType.AI_GENERATION_FAILED_AFTER_RETRY.name());
-        throw e;
     }
 
     /**
@@ -988,5 +1039,98 @@ public class TestCaseServiceImpl implements TestCaseService {
         }
 
         return sb.toString();
+    }
+
+    // ==================== 重试和失败记录相关方法 ====================
+
+    /**
+     * 构建重试上下文，用于传递给 AI
+     */
+    private String buildRetryContext(String lastError, String lastSolutionCode, ProblemGenerationResponse problem) {
+        if (lastError == null || lastError.isBlank()) {
+            return "";
+        }
+
+        StringBuilder context = new StringBuilder();
+        context.append("\n\n【上次失败原因，请务必避免】\n");
+        context.append(lastError).append("\n");
+
+        if (lastSolutionCode != null && !lastSolutionCode.isBlank()) {
+            context.append("\n上次尝试的 solutionCode 思路：\n");
+            // 截取前200字符作为摘要
+            String codePreview = lastSolutionCode.length() > 200
+                    ? lastSolutionCode.substring(0, 200) + "..."
+                    : lastSolutionCode;
+            context.append(codePreview).append("\n");
+            context.append("请换一个完全不同的算法思路来解决这道题。\n");
+        }
+
+        context.append("\n【重要】请确保：\n");
+        context.append("1. 仔细理解题目描述，特别是关于'选择'、'跳过'、'连续'等操作的描述\n");
+        context.append("2. 在生成 solutionCode 后，用样例进行验证\n");
+        context.append("3. 如果验证失败，请重新分析题目并修正代码\n");
+
+        return context.toString();
+    }
+
+    /**
+     * 记录失败案例到记忆系统
+     */
+    private void recordFailureCase(ProblemGenerationResponse problem,
+                                   String solutionCode,
+                                   String errorType,
+                                   String errorDetail) {
+        if (caseSearchService == null) {
+            log.warn("[TestCaseServiceImpl] CaseSearchService 未注入，跳过失败记录");
+            return;
+        }
+
+        try {
+            FailureCase failureCase = new FailureCase();
+            failureCase.setProblemType(analyzeProblemType(problem));
+            failureCase.setFailureReason(errorType);
+            failureCase.setFailureDetail(errorDetail);
+            failureCase.setProblemHash(problem != null
+                    ? DigestUtil.sha256Hex((problem.getTitle() != null ? problem.getTitle() : "")
+                    + (problem.getDescription() != null ? problem.getDescription() : ""))
+                    : null);
+            failureCase.setProblemTitle(problem != null ? problem.getTitle() : null);
+            failureCase.setRetryCount(3);
+            failureCase.setFinalErrorType(errorType);
+            failureCase.setModelName("deepseek-chat");
+            failureCase.setCreatedAt(LocalDateTime.now());
+
+            caseSearchService.recordFailureCase(failureCase);
+            log.info("[TestCaseServiceImpl] 失败案例已记录到记忆系统");
+        } catch (Exception e) {
+            log.warn("[TestCaseServiceImpl] 记录失败案例异常: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 分析题目类型
+     */
+    private String analyzeProblemType(ProblemGenerationResponse problem) {
+        if (problem == null) {
+            return "UNKNOWN";
+        }
+
+        // 基于标签判断题目类型
+        StringBuilder typeBuilder = new StringBuilder();
+        if (problem.getTagIds() != null) {
+            for (Integer tagId : problem.getTagIds()) {
+                if (tagId == 17) typeBuilder.append("DP,");  // 动态规划
+                else if (tagId == 18) typeBuilder.append("GREEDY,");  // 贪心
+                else if (tagId == 19) typeBuilder.append("BACKTRACK,");  // 回溯
+                else if (tagId == 25) typeBuilder.append("TWO_POINTERS,");  // 双指针
+                else if (tagId == 26) typeBuilder.append("SLIDING_WINDOW,");  // 滑动窗口
+            }
+        }
+
+        if (typeBuilder.length() > 0) {
+            return typeBuilder.substring(0, typeBuilder.length() - 1);
+        }
+
+        return "UNKNOWN";
     }
 }

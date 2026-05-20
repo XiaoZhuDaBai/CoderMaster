@@ -3,7 +3,7 @@ package xiaozhu.ai.service.problem;
 import cn.hutool.core.util.StrUtil;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONException;
-import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.service.AiServices;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -50,14 +50,14 @@ public class ProblemServiceImpl implements ProblemService {
 
     public ProblemServiceImpl(
             RedisTemplate<String, Object> redisTemplate,
-            @Qualifier("chatModelPrototype") ChatLanguageModel chatModel,
+            @Qualifier("chatModelPrototype") ChatModel chatModel,
             RabbitTemplate rabbitTemplate,
             AiMetricsService aiMetricsService) {
         this.redisTemplate = redisTemplate;
         this.rabbitTemplate = rabbitTemplate;
         this.aiMetricsService = aiMetricsService;
         this.questionGenerationAiService = AiServices.builder(QuestionGenerationAiService.class)
-                .chatLanguageModel(chatModel)
+                .chatModel(chatModel)
                 .build();
     }
 

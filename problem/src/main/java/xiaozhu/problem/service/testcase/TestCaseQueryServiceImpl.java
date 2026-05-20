@@ -23,6 +23,7 @@ import static java.util.concurrent.TimeUnit.DAYS;
 public class TestCaseQueryServiceImpl implements TestCaseQueryService {
 
     private static final long CACHE_TTL_DAYS = 7L;
+    private static final long PUBLIC_CACHE_TTL_DAYS = 30L;
 
     private final RedisTemplate<String, Object> redisTemplate;
     private final QuestionTestCaseMapper questionTestCaseMapper;
@@ -96,8 +97,15 @@ public class TestCaseQueryServiceImpl implements TestCaseQueryService {
             String redisKey = RedisKeyConstant.QUESTION_TEST_CASE_PREFIX + contentHash;
             TestCaseGenerationResponse response = new TestCaseGenerationResponse();
             response.setTestCases(testCases);
-            redisTemplate.opsForValue().set(redisKey, response, CACHE_TTL_DAYS, TimeUnit.DAYS);
-            log.info("测试用例已回写Redis，contentHash={}, count={}", contentHash, testCases.size());
+
+            // 动态计算 TTL：有公开用例则缓存 30 天，否则缓存 7 天
+            boolean hasPublic = testCases.stream()
+                    .anyMatch(tc -> tc.getIsPublic() != null && tc.getIsPublic() == 1);
+            long ttlDays = hasPublic ? PUBLIC_CACHE_TTL_DAYS : CACHE_TTL_DAYS;
+
+            redisTemplate.opsForValue().set(redisKey, response, ttlDays, TimeUnit.DAYS);
+            log.info("测试用例已回写Redis，contentHash={}, count={}, ttl={}天",
+                    contentHash, testCases.size(), ttlDays);
         } catch (Exception e) {
             log.error("回写Redis失败，contentHash={}", contentHash, e);
         }

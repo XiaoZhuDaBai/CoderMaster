@@ -40,12 +40,11 @@ public class StreamingHandler {
      * 处理流式响应
      *
      * @param tokenStream  LLM 返回的 TokenStream
-     * @param onToken     每个 token 的回调函数
+     * @param onToken      每个 token 的回调函数
      * @param useReasoning 是否使用推理模式
-     * @param parser      响应解析器（可选）
-     * @return 完整内容
+     * @param parser       响应解析器（可选）
      */
-    public static String processStreaming(
+    public static void processStreaming(
             TokenStream tokenStream,
             Consumer<String> onToken,
             boolean useReasoning,
@@ -126,7 +125,6 @@ public class StreamingHandler {
             throw new IllegalStateException("流式处理失败", errorRef.get());
         }
 
-        return fullContentBuilder.toString();
     }
 
     /**

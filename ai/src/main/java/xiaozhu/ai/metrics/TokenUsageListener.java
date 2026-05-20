@@ -8,6 +8,8 @@ import dev.langchain4j.model.chat.response.ChatResponseMetadata;
 import dev.langchain4j.model.output.TokenUsage;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.concurrent.atomic.LongAdder;
+
 /**
  * LangChain4j ChatModelListener 实现，用于捕获所有 ChatLanguageModel 和
  * StreamingChatLanguageModel 调用完成后的真实 Token 使用量。
@@ -17,14 +19,55 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>使用方式：在 OpenAiChatModel / OpenAiStreamingChatModel 的 builder 中
  * 通过 {@code .listeners(List.of(listener))} 注册。
+ *
+ * <p>同时维护 ThreadLocal 级别的累计计数器，支持按生成会话追踪 token 消耗。
  */
 @Slf4j
 public class TokenUsageListener implements ChatModelListener {
+
+    /**
+     * 每个线程（生成会话）累计的 token 数。
+     * 通过 {@link #resetSession()} 开始新会话，通过 {@link #getSessionTotalTokens()} 查询。
+     */
+    private static final ThreadLocal<LongAdder> SESSION_TOTAL_TOKENS = ThreadLocal.withInitial(LongAdder::new);
+    private static final ThreadLocal<LongAdder> SESSION_INPUT_TOKENS = ThreadLocal.withInitial(LongAdder::new);
+    private static final ThreadLocal<LongAdder> SESSION_OUTPUT_TOKENS = ThreadLocal.withInitial(LongAdder::new);
 
     private final AiMetricsService metricsService;
 
     public TokenUsageListener(AiMetricsService metricsService) {
         this.metricsService = metricsService;
+    }
+
+    /**
+     * 开始一个新的生成会话计数。
+     * 必须在每次 {@code TestCaseGenerationAgentService.generate()} 调用前调用。
+     */
+    public static void resetSession() {
+        SESSION_TOTAL_TOKENS.get().reset();
+        SESSION_INPUT_TOKENS.get().reset();
+        SESSION_OUTPUT_TOKENS.get().reset();
+    }
+
+    /**
+     * 获取当前会话累计的 total tokens。
+     */
+    public static long getSessionTotalTokens() {
+        return SESSION_TOTAL_TOKENS.get().sum();
+    }
+
+    /**
+     * 获取当前会话累计的 input tokens。
+     */
+    public static long getSessionInputTokens() {
+        return SESSION_INPUT_TOKENS.get().sum();
+    }
+
+    /**
+     * 获取当前会话累计的 output tokens。
+     */
+    public static long getSessionOutputTokens() {
+        return SESSION_OUTPUT_TOKENS.get().sum();
     }
 
     @Override
@@ -52,17 +95,20 @@ public class TokenUsageListener implements ChatModelListener {
             return;
         }
 
-        Long inputTokens = Long.valueOf(tokenUsage.inputTokenCount());
-        Long outputTokens = Long.valueOf(tokenUsage.outputTokenCount());
-        Long totalTokens = Long.valueOf(tokenUsage.totalTokenCount());
+        int inputTokens = tokenUsage.inputTokenCount();
+        int outputTokens = tokenUsage.outputTokenCount();
+        int totalTokens = tokenUsage.totalTokenCount();
 
-        log.info("[TokenUsageListener] 捕获 Token 使用量 - input: {}, output: {}, total: {}",
-                inputTokens, outputTokens, totalTokens);
+        // 累加到当前会话
+        SESSION_TOTAL_TOKENS.get().add(totalTokens);
+        SESSION_INPUT_TOKENS.get().add(inputTokens);
+        SESSION_OUTPUT_TOKENS.get().add(outputTokens);
 
-        metricsService.recordTokenUsage(
-                inputTokens.intValue(),
-                outputTokens.intValue()
-        );
+        log.info("[TokenUsageListener] 捕获 Token 使用量 - input: {}, output: {}, total: {} (会话累计: {}/{})",
+                inputTokens, outputTokens, totalTokens,
+                SESSION_TOTAL_TOKENS.get().sum(), SESSION_INPUT_TOKENS.get().sum() + SESSION_OUTPUT_TOKENS.get().sum());
+
+        metricsService.recordTokenUsage(inputTokens, outputTokens);
     }
 
     @Override
