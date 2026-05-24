@@ -1,6 +1,5 @@
 package xiaozhu.ai.consumer;
 
-import cn.hutool.core.util.StrUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -26,7 +25,6 @@ import java.util.concurrent.TimeUnit;
 /**
  * 测试用例消息消费者
  * 异步消费题目生成事件，在本地生成测试用例并缓存到 Redis
- *
  * 不再支持降级模式（模式B存在AI幻觉问题），失败时通过重试机制保证可靠性
  */
 @Slf4j
@@ -47,7 +45,6 @@ public class TestCaseConsumer {
     private final TestCaseService testCaseService;
     private final RabbitTemplate rabbitTemplate;
     private final TestCaseGenerationAgentService testCaseGenerationAgentService;
-    private final AgentConfig agentConfig;
     private final TestCaseGenerationConfig testCaseGenerationConfig;
 
     @RabbitListener(queues = RabbitMQConstants.PROBLEM_TESTCASE_GENERATED_QUEUE)
@@ -191,6 +188,15 @@ public class TestCaseConsumer {
             long sampleCount = response.getTestCases().stream().filter(tc -> tc.getIsPublic() != null && tc.getIsPublic() == 1).count();
             long hiddenCount = response.getTestCases().stream().filter(tc -> tc.getIsPublic() != null && tc.getIsPublic() == 0).count();
             log.info("[TestCaseConsumer] 共生成 {} 个测试用例（SAMPLE: {}, HIDDEN: {}）", response.getTestCases().size(), sampleCount, hiddenCount);
+
+            // 确保 caseIndex 有值（防御性检查）
+            for (int i = 0; i < response.getTestCases().size(); i++) {
+                TestCaseGenerationResponse.TestCaseDetail tc = response.getTestCases().get(i);
+                if (tc.getCaseIndex() == null) {
+                    tc.setCaseIndex(i + 1);
+                    log.warn("[TestCaseConsumer] caseIndex 为空，已设置为 {}，contentHash={}", i + 1, contentHash);
+                }
+            }
 
             // Step 4: 保存到 Redis
             log.info("[TestCaseConsumer] 保存测试用例到 Redis...");

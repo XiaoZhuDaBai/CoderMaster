@@ -68,6 +68,24 @@ public class TestCaseSyncServiceImpl implements TestCaseSyncService {
             return;
         }
 
+        // 防御性：确保 caseIndex 不为 null
+        if (detail.getCaseIndex() == null) {
+            log.warn("测试用例 caseIndex 为 null，使用默认值 1，contentHash={}", contentHash);
+            detail.setCaseIndex(1);
+        }
+        // 防御性：确保 isPublic 不为 null
+        if (detail.getIsPublic() == null) {
+            detail.setIsPublic(0);
+        }
+        // 防御性：确保 generationSource 不为 null
+        if (detail.getGenerationSource() == null) {
+            detail.setGenerationSource("AI");
+        }
+        // 防御性：确保 version 不为 null
+        if (detail.getVersion() == null) {
+            detail.setVersion(1);
+        }
+
         LambdaQueryWrapper<QuestionTestCase> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(QuestionTestCase::getContentHash, contentHash)
                .eq(QuestionTestCase::getCaseIndex, detail.getCaseIndex());

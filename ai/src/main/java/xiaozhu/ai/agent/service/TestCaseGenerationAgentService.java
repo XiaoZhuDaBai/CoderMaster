@@ -3,7 +3,6 @@ package xiaozhu.ai.agent.service;
 import cn.hutool.core.util.StrUtil;
 import com.alibaba.fastjson2.JSON;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.response.ChatResponse;
@@ -54,8 +53,6 @@ import xiaozhu.common.message.ProblemExpectedOutputFixMessage;
 public class TestCaseGenerationAgentService {
 
     private final ChatModel chatModel;
-    private final SandboxTool sandboxTool;
-    private final MemoryTool memoryTool;
     private final AgentConfig agentConfig;
     private final CrossValidationConfig crossValidationConfig;
     private final CrossValidationService crossValidationService;
@@ -78,8 +75,6 @@ public class TestCaseGenerationAgentService {
             JudgeSandboxFeignClient judgeSandboxFeignClient,
             RabbitTemplate rabbitTemplate) {
         this.chatModel = chatModel;
-        this.sandboxTool = sandboxTool;
-        this.memoryTool = memoryTool;
         this.agentConfig = agentConfig;
         this.crossValidationConfig = crossValidationConfig;
         this.crossValidationService = crossValidationService;
@@ -785,7 +780,26 @@ public class TestCaseGenerationAgentService {
         try {
             String json = extractJson(response);
             if (json != null) {
-                return JSON.parseObject(json, TestCaseGenerationResponse.class);
+                TestCaseGenerationResponse result = JSON.parseObject(json, TestCaseGenerationResponse.class);
+                // 确保 caseIndex 有值（从 1 开始递增）
+                if (result != null && result.getTestCases() != null) {
+                    for (int i = 0; i < result.getTestCases().size(); i++) {
+                        TestCaseGenerationResponse.TestCaseDetail tc = result.getTestCases().get(i);
+                        if (tc.getCaseIndex() == null) {
+                            tc.setCaseIndex(i + 1);
+                        }
+                        if (tc.getIsPublic() == null) {
+                            tc.setIsPublic(i < 2 ? 1 : 0);
+                        }
+                        if (tc.getGenerationSource() == null) {
+                            tc.setGenerationSource("AI");
+                        }
+                        if (tc.getVersion() == null) {
+                            tc.setVersion(1);
+                        }
+                    }
+                }
+                return result;
             }
         } catch (Exception e) {
             log.warn("[AgentService] JSON 解析失败: {}", e.getMessage());
@@ -823,6 +837,10 @@ public class TestCaseGenerationAgentService {
             if (response.getTestCases() != null) {
                 for (int i = 0; i < response.getTestCases().size(); i++) {
                     TestCaseGenerationResponse.TestCaseDetail tc = response.getTestCases().get(i);
+                    // 确保 caseIndex 有值（从 1 开始递增）
+                    if (tc.getCaseIndex() == null) {
+                        tc.setCaseIndex(i + 1);
+                    }
                     if (tc.getIsPublic() == null) {
                         tc.setIsPublic(i < 2 ? 1 : 0); // 前2个为样例，后面的为隐藏用例
                     }

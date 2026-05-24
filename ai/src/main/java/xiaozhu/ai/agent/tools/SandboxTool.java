@@ -19,7 +19,6 @@ import java.util.List;
 
 /**
  * Agent 沙箱执行工具
- *
  * 提供给 Agent 调用的工具：
  * 1. executeCode - 在沙箱中执行代码（支持多语言）
  * 2. runGeneratorCode - 执行测试用例生成器并自动获取 expectedOutput
@@ -122,7 +121,6 @@ public class SandboxTool {
 
     /**
      * 执行测试用例生成器并自动获取 expectedOutput
-     *
      * 流程：
      * 1. 执行 generatorCode 获取 rawInput
      * 2. 执行 solutionCode 获取 expectedOutput
@@ -165,13 +163,13 @@ public class SandboxTool {
                 String genResult = executeCode(generatorCode, null, actualLang);
 
                 if (genResult == null || genResult.contains("\"success\":false")) {
-                    log.warn("[SandboxTool] runGeneratorCode 第{}次：generatorCode 执行失败，跳过", i + 1);
+                    log.warn("[SandboxTool] runGeneratorCode caseIndex={}: generatorCode 执行失败，跳过", i);
                     continue;
                 }
 
                 String rawInput = extractOutput(genResult);
                 if (rawInput == null || rawInput.isBlank()) {
-                    log.warn("[SandboxTool] runGeneratorCode 第{}次：generatorCode 输出为空，跳过", i + 1);
+                    log.warn("[SandboxTool] runGeneratorCode caseIndex={}: generatorCode 输出为空，跳过", i);
                     continue;
                 }
 
@@ -179,19 +177,19 @@ public class SandboxTool {
                 String solResult = executeCode(solutionCode, rawInput, actualLang);
 
                 if (solResult == null || solResult.contains("\"success\":false")) {
-                    log.warn("[SandboxTool] runGeneratorCode 第{}次：solutionCode 执行失败，跳过", i + 1);
+                    log.warn("[SandboxTool] runGeneratorCode caseIndex={}: solutionCode 执行失败，跳过", i);
                     continue;
                 }
 
                 String expectedOutput = extractOutput(solResult);
                 if (expectedOutput == null || expectedOutput.isBlank()) {
-                    log.warn("[SandboxTool] runGeneratorCode 第{}次：solutionCode 输出为空，跳过", i + 1);
+                    log.warn("[SandboxTool] runGeneratorCode caseIndex={}: solutionCode 输出为空，跳过", i);
                     continue;
                 }
 
-                testCases.add(new TestCaseItem(rawInput.trim(), expectedOutput.trim()));
-                log.info("[SandboxTool] runGeneratorCode 第{}次成功，input长度={}, output长度={}",
-                        i + 1, rawInput.length(), expectedOutput.length());
+                testCases.add(new TestCaseItem(i, rawInput.trim(), expectedOutput.trim()));
+                log.info("[SandboxTool] runGeneratorCode caseIndex={} 成功，input长度={}, output长度={}",
+                        i, rawInput.length(), expectedOutput.length());
             }
 
             if (testCases.isEmpty()) {
@@ -380,5 +378,5 @@ public class SandboxTool {
     private record VerifyResult(boolean passed, int passCount, int totalCount, String message) {}
     private record SampleCase(String input, String expectedOutput) {}
     private record RunGeneratorResult(boolean success, int count, Object data) {}
-    private record TestCaseItem(String input, String expectedOutput) {}
+    private record TestCaseItem(int caseIndex, String input, String expectedOutput) {}
 }
