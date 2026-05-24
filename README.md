@@ -1,96 +1,59 @@
-# OJ微服务系统
+# CodeMaster OJ - 在线评测系统
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Spring%20Boot-3.2.5-brightgreen" alt="Spring Boot">
+  <img src="https://img.shields.io/badge/Spring%20Cloud-2023.0.0-blue" alt="Spring Cloud">
+  <img src="https://img.shields.io/badge/Java-21-orange" alt="Java">
+  <img src="https://img.shields.io/badge/Docker-Ready-blue" alt="Docker">
+</p>
 
 ## 项目简介
 
-OJ微服务系统是一个完整的在线判题平台，采用微服务架构设计，集成了AI辅助功能，为编程学习和竞赛提供全方位的解决方案。系统支持多种编程语言的代码提交和自动判题，同时具备题目自动生成、题解辅助生成等AI功能。
+CodeMaster 是一个现代化的在线评测系统（Online Judge），采用微服务架构设计，集成 AI 辅助功能，为编程学习和竞赛提供一站式解决方案。系统支持多种编程语言的代码在线评测，具备题目智能生成、题解辅助生成等 AI 功能。
+
+**在线体验**: https://codemaster.xiaozhu.edu.cn
 
 ## 核心特性
 
+### 智能评测引擎
+- **多语言支持**: Java、C、C++、Python3、JavaScript、Go 等主流语言
+- **沙箱隔离**: Docker 容器隔离执行用户代码，确保系统安全
+- **资源限制**: 可配置 CPU、内存、时间限制
+- **容器池复用**: 高效利用资源，支持高并发评测
+
+### AI 智能助手
+- **题目生成**: 根据标签、难度等条件自动生成编程题目
+- **题解生成**: 流式输出详细解题思路和代码实现
+- **测试用例**: 自动生成完整的测试用例集
+- **交叉验证**: 多模型交叉验证确保生成质量
+
 ### 技术架构
-- 微服务架构：基于Spring Cloud Alibaba，采用服务拆分设计
-- 容器化部署：Docker容器化，支持云原生部署
-- 服务治理：Nacos服务注册与发现
-- 分布式缓存：Redis缓存支持
-- 消息队列：RabbitMQ异步处理
-- 监控体系：Prometheus + Grafana全面监控
-
-### 编程语言支持
-- Java
-- C++
-- C
-- Python 3
-- JavaScript
-- Go
-
-### AI智能功能
-- 题目自动生成：AI根据标签、难度、场景生成编程题目
-- 题解辅助生成：流式生成详细题解和解题思路
-- 测试用例生成：自动生成完整的测试用例
-- 思维提示：提供解题思路和算法提示
-
-### 竞赛功能
-- 编程竞赛：支持创建和管理编程竞赛
-- 实时排行榜：竞赛期间实时更新排名
-- 题目管理：竞赛题目组织和权限控制
-
-### 安全与性能
-- 沙箱执行：Docker容器隔离执行用户代码
-- 资源限制：CPU、内存、时间限制确保安全
-- 并发控制：容器池复用提高性能
-- JWT认证：安全的用户身份验证
+| 特性 | 技术选型 |
+|------|----------|
+| 微服务框架 | Spring Cloud Alibaba 2023.0.0 |
+| 服务注册 | Nacos 2.2.3 |
+| 消息队列 | RabbitMQ 3.12 |
+| 缓存 | Redis 7 |
+| 数据库 | MySQL 8.0 |
+| AI 集成 | LangChain4j + DeepSeek API |
+| 监控 | Prometheus + Grafana |
 
 ## 系统架构
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                          前端应用层                                │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │ Web客户端 / 移动客户端                                        │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-└─────────────────────┬───────────────────────────────────────────────┘
-                      │ HTTP/REST
-                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                        API网关层                                 │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │ Gateway Service (Spring Cloud Gateway)                      │ │
-│  │ - 统一入口、路由转发、认证鉴权、限流熔断                      │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-└─────────────────────┬───────────────────────────────────────────────┘
-                      │ 服务调用
-                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                        业务服务层                                │
-│  ┌─────┬─────┬─────┬─────┬─────┬─────┬─────┐                     │
-│  │User │Prob │Subm │Judge│AI   │Cont │Auth │                     │
-│  │Svc  │Svc  │Svc  │Svc  │Svc  │Svc  │Svc  │                     │
-│  └─────┴─────┴─────┴─────┴─────┴─────┴─────┘                     │
-└─────────────────────┬───────────────────────────────────────────────┘
-                      │ 数据访问
-                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                       数据存储层                                 │
-│  ┌─────┬─────┬─────┬─────┬─────┐                                 │
-│  │MySQL│Redis│Rabit│Nacos│Obj. │                                 │
-│  │     │     │MQ   │     │Store│                                 │
-│  └─────┴─────┴─────┴─────┴─────┘                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
+![](https://cdn.nlark.com/yuque/0/2026/png/62242460/1769677391402-50e4db35-fd7c-4783-a4a4-b4e494494d9c.png)
 
 ### 服务组成
 
 | 服务名称 | 技术栈 | 端口 | 功能描述 |
-|---------|--------|------|----------|
+| --- | --- | --- | --- |
 | Gateway | Spring Cloud Gateway | 8080 | API网关，统一入口、路由、认证 |
 | User Service | Spring Boot | 8081 | 用户管理、登录注册、权限控制 |
 | Problem Service | Spring Boot | 8082 | 题目管理、题目列表查询 |
 | Submission Service | Spring Boot | 8083 | 代码提交、判题结果查询 |
 | Judge Service | Spring Boot + Docker | 8085 | 代码判题、沙箱执行 |
 | AI Service | Spring Boot + LangChain4j | 8084 | AI题目生成、题解生成 |
-| Contest Service | Spring Boot | 8086 | 竞赛管理、排行榜 |
 
 ### 基础设施服务
-
 - Nacos：服务注册与配置中心
 - Redis：分布式缓存、会话存储
 - RabbitMQ：消息队列、异步处理
@@ -98,91 +61,71 @@ OJ微服务系统是一个完整的在线判题平台，采用微服务架构设
 - Prometheus：指标收集与监控
 - Grafana：可视化监控面板
 
-## 快速开始
+### 核心功能流程图
+
+#### 1. 用户登录/退出
+
+![](https://cdn.nlark.com/yuque/0/2026/png/62242460/1769677531338-d4c6dcf0-e229-4f00-9fe6-c28b7658fa67.png)
+
+#### 2. AI 生成题目流程
+
+![](https://cdn.nlark.com/yuque/0/2026/png/62242460/1769677583237-f21645f5-46c7-4173-a886-01ef4f184abd.png)
+
+#### 3. 提交到判题的流程
+
+![](https://cdn.nlark.com/yuque/0/2026/png/62242460/1769677634108-069987af-65c5-481e-9d97-ced68a76cab9.png)
+
+## 快速部署
 
 ### 环境要求
 
-- JDK：21+
-- Maven：3.6+
-- Docker：20.10+
-- Docker Compose：2.0+
-- Node.js：16+ (前端开发)
+| 组件 | 版本要求 |
+|------|----------|
+| JDK | 21+ |
+| Maven | 3.9+ |
+| Docker | 20.10+ |
+| Docker Compose | 2.0+ |
 
-### 推荐服务器配置
+### Docker 部署
 
-| 配置类型 | CPU | 内存 | 适用场景 |
-|---------|-----|------|----------|
-| 开发环境 | 4核 | 8GB | 本地开发、功能测试 |
-| 生产环境 | 8核 | 16GB | 中小型生产部署 |
-| 高并发 | 16核 | 32GB | 大规模并发使用 |
-
-### 部署步骤
-
-#### 1. 克隆项目
 ```bash
+# 1. 克隆项目
 git clone https://github.com/your-username/oj-microservice.git
 cd oj-microservice
+
+# 2. 配置环境变量
+cp .env.example .env
+# 编辑 .env 文件，配置数据库、AI API 等
+
+# 3. 一键部署
+chmod +x deploy.sh
+./deploy.sh deploy
+
+# 或直接使用 docker-compose
+docker-compose up -d --build
 ```
 
-#### 2. 启动基础设施
+### 手动部署
+
 ```bash
-# 启动Nacos、Redis、Prometheus、Grafana
-docker-compose up -d nacos redis prometheus grafana
+# 1. 编译项目
+mvn clean package -DskipTests
 
-# 可选：启动cAdvisor进行容器监控
-docker-compose up -d cadvisor
-```
+# 2. 启动基础设施服务
+docker-compose up -d nacos redis rabbitmq mysql
 
-#### 3. 初始化数据库
-```bash
-# 执行数据库初始化脚本
-mysql -u root -p < database/user-database.sql
-mysql -u root -p < database/problem-database.sql
-mysql -u root -p < database/submission-database.sql
-```
+# 3. 初始化数据库
+mysql -h localhost -u root -p < database/init/*.sql
 
-#### 4. 配置环境变量
-```bash
-# 复制配置文件模板
-cp gateway/src/main/resources/application.yaml.example gateway/src/main/resources/application.yaml
-cp ai-service/src/main/resources/application.yaml.example ai-service/src/main/resources/application.yaml
-# ... 为其他服务复制配置文件
-
-# 编辑配置文件，设置数据库连接、Redis连接、AI API密钥等
-```
-
-#### 5. 编译和启动服务
-```bash
-# 编译所有服务
-mvn clean compile
-
-# 启动各个微服务（建议按依赖顺序启动）
-mvn spring-boot:run -pl gateway
-mvn spring-boot:run -pl user-service
-mvn spring-boot:run -pl problem-service
-mvn spring-boot:run -pl ai-service
-mvn spring-boot:run -pl submission-service
-mvn spring-boot:run -pl judge-service
-mvn spring-boot:run -pl contest-service
-```
-
-#### 6. 验证部署
-```bash
-# 检查服务状态
-curl http://localhost:8080/actuator/health
-
-# 访问监控面板
-# Prometheus: http://localhost:9090
-# Grafana: http://localhost:3000 (admin/admin)
+# 4. 启动微服务
+java -jar gateway/target/gateway.jar &
+java -jar user/target/user.jar &
+# ... 其他服务
 ```
 
 ## API文档
 
-完整的API文档请参考：[API接口文档](API接口文档.md)
-
-### 核心接口
-
-#### 用户认证
+### 用户认证
 ```bash
 # 发送验证码
 POST /api/user/sendCode?email=user@example.com
@@ -191,7 +134,7 @@ POST /api/user/sendCode?email=user@example.com
 POST /api/user/loginOrRegister
 ```
 
-#### AI功能
+### AI功能
 ```bash
 # 生成题目
 POST /api/problem/generate
@@ -200,7 +143,7 @@ POST /api/problem/generate
 POST /api/solution/generate/streaming
 ```
 
-#### 代码提交
+### 代码提交
 ```bash
 # 提交代码
 POST /api/submissions
@@ -209,40 +152,54 @@ POST /api/submissions
 GET /api/submissions/{submissionId}
 ```
 
-## Docker部署
+## 项目结构
 
-### 单机部署
-```bash
-# 构建所有服务镜像
-docker build -t oj-gateway ./gateway
-docker build -t oj-user-service ./user-service
-# ... 构建其他服务镜像
-
-# 使用docker-compose启动
-docker-compose -f docker-compose.prod.yml up -d
+```
+oj-microservice/
+├── gateway/              # API 网关服务
+├── user/                 # 用户服务
+├── problem/              # 题目服务
+├── submission/           # 提交服务
+├── judge/                # 判题服务
+├── ai/                   # AI 服务
+├── common/               # 公共模块
+├── database/
+│   └── init/             # 数据库初始化脚本
+├── monitoring/           # 监控配置
+│   ├── prometheus/
+│   └── grafana/
+├── docker-compose.yml    # Docker 编排配置
+├── deploy.sh             # 部署脚本
+└── DEPLOYMENT.md         # 部署文档
 ```
 
-### 分布式部署
-```bash
-# Kubernetes部署
-kubectl apply -f k8s/
+## 配置说明
 
-# 或使用Docker Swarm
-docker stack deploy -c docker-compose.swarm.yml oj-stack
-```
+### 环境变量
 
-## 贡献指南
+| 变量名 | 说明 | 示例 |
+|--------|------|------|
+| MYSQL_ROOT_PASSWORD | MySQL root 密码 | root123456 |
+| REDIS_PASSWORD | Redis 密码 | - |
+| RABBITMQ_USERNAME | RabbitMQ 用户名 | guest |
+| RABBITMQ_PASSWORD | RabbitMQ 密码 | guest |
+| JWT_SECRET | JWT 密钥 | your-secret-key |
+| DEEPSEEK_API_KEY | DeepSeek API 密钥 | sk-xxx |
+| MAIL_USERNAME | 邮箱账号 | example@qq.com |
+| MAIL_PASSWORD | 邮箱授权码 | - |
 
-1. Fork本项目
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 创建Pull Request
+### 服务端口
 
-### 开发规范
-- 遵循阿里巴巴Java开发规范
-- 提交前运行单元测试：`mvn test`
-- 代码格式化：`mvn spotless:apply`
+| 服务 | 端口 | 说明 |
+|------|------|------|
+| Gateway | 8080 | API 网关入口 |
+| User | 8081 | 用户服务 |
+| Problem | 8082 | 题目服务 |
+| Submission | 8083 | 提交服务 |
+| AI | 8084 | AI 服务 |
+| Judge | 8085 | 判题服务 |
+| Nacos | 8848 | 注册中心 |
+| RabbitMQ | 15672 | 管理界面 |
 
 ## 技术栈
 
@@ -255,35 +212,44 @@ docker stack deploy -c docker-compose.swarm.yml oj-stack
 - 监控：Micrometer, Prometheus, Grafana
 - 安全：JWT, Spring Security
 
-### 前端技术栈
-- 框架：React/Vue.js + TypeScript
-- 构建工具：Vite/Webpack
-- 状态管理：Redux/Vuex
-- UI组件：Ant Design/Material-UI
+## 监控运维
 
-### DevOps
-- 容器化：Docker, Docker Compose
-- CI/CD：GitHub Actions/Jenkins
-- 配置管理：Nacos Config
-- 日志聚合：ELK Stack
+### 访问地址
+
+| 服务 | 地址 | 凭据 |
+|------|------|------|
+| Gateway | http://localhost:8080 | - |
+| Nacos | http://localhost:8848/nacos | nacos/nacos |
+| RabbitMQ | http://localhost:15672 | guest/guest |
+| Prometheus | http://localhost:9090 | - |
+| Grafana | http://localhost:3000 | admin/admin |
+
+### 常用运维命令
+
+```bash
+# 查看服务状态
+docker-compose ps
+
+# 查看日志
+docker-compose logs -f gateway
+
+# 重启服务
+docker-compose restart judge
+
+# 清理并重建
+docker-compose down -v && docker-compose up -d --build
+```
 
 ## 开源协议
 
-本项目采用 [MIT License](LICENSE) 开源协议。
+本项目基于 [MIT License](LICENSE) 开源，可以自由使用和修改。
 
-## 贡献者
+## 联系方式
 
-感谢所有为这个项目做出贡献的开发者！
+- **作者**: xiaozhu
+- **邮箱**: 1105774747@qq.com
+- **问题反馈**: [GitHub Issues](https://github.com/your-username/oj-microservice/issues)
 
-## 联系我们
+---
 
-- 项目主页：https://github.com/your-username/oj-microservice
-- 问题反馈：[GitHub Issues](https://github.com/your-username/oj-microservice/issues)
-- 邮箱：your-email@example.com
-
-## 致谢
-
-- [Spring Cloud Alibaba](https://github.com/alibaba/spring-cloud-alibaba) - 微服务解决方案
-- [LangChain4j](https://github.com/langchain4j/langchain4j) - Java版LangChain
-- [Docker](https://www.docker.com/) - 容器化平台
-- [Prometheus](https://prometheus.io/) - 监控系统
+**Star ⭐ 支持一下，让更多人看到！**
