@@ -26,6 +26,14 @@ spring:
           filters:
             - StripPrefix=0
         
+        # 问题服务 - 内部接口（Feign 调用）
+        - id: problem-service-internal
+          uri: lb://oj-problem
+          predicates:
+            - Path=/api/problem/internal/**
+          filters:
+            - StripPrefix=0
+        
         # 问题服务 - 题目交付
         - id: problem-service-delivery
           uri: lb://oj-problem
@@ -55,14 +63,6 @@ spring:
           uri: lb://oj-judge
           predicates:
             - Path=/api/judge/**
-          filters:
-            - StripPrefix=0
-        
-        # 竞赛服务
-        - id: contest-service
-          uri: lb://oj-contest
-          predicates:
-            - Path=/api/contest/**
           filters:
             - StripPrefix=0
     nacos:

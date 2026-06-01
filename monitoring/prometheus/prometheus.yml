@@ -5,71 +5,64 @@ global:
     cluster: 'oj-microservice'
     environment: 'production'
 
-# Alertmanager 配置（可选）
-# alerting:
-#   alertmanagers:
-#     - static_configs:
-#         - targets:
-#           - alertmanager:9093
-
-# 规则文件（可选）
-# rule_files:
-#   - "alert_rules.yml"
-
 scrape_configs:
-  # Prometheus 自身监控
+  # Prometheus 自身监控 (容器内使用 localhost 访问自己)
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
 
-  # AI 服务监控
-  - job_name: 'ai-service'
+  # API 网关 (使用 host.docker.internal 访问宿主机上的 IDE 服务)
+  - job_name: 'gateway'
     metrics_path: '/actuator/prometheus'
     static_configs:
-      - targets: ['host.docker.internal:8084']
+      - targets: ['host.docker.internal:8080']
         labels:
-          service: 'ai-service'
-          application: 'oj-ai-service'
+          service: 'gateway'
 
-  # 判题服务监控
-  - job_name: 'judge-service'
+  # 用户服务
+  - job_name: 'user-service'
     metrics_path: '/actuator/prometheus'
     static_configs:
-      - targets: ['host.docker.internal:8085']
+      - targets: ['host.docker.internal:8081']
         labels:
-          service: 'judge-service'
-          application: 'oj-judge-service'
+          service: 'user-service'
 
-  # 提交服务监控
-  - job_name: 'submission-service'
-    metrics_path: '/actuator/prometheus'
-    static_configs:
-      - targets: ['host.docker.internal:8083']
-        labels:
-          service: 'submission-service'
-          application: 'oj-submission-service'
-
-  # 题目服务监控
+  # 题目服务
   - job_name: 'problem-service'
     metrics_path: '/actuator/prometheus'
     static_configs:
       - targets: ['host.docker.internal:8082']
         labels:
           service: 'problem-service'
-          application: 'oj-problem-service'
 
-  # RabbitMQ 监控（使用 rabbitmq_exporter）
-  - job_name: 'rabbitmq'
+  # 提交服务
+  - job_name: 'submission-service'
+    metrics_path: '/actuator/prometheus'
     static_configs:
-      - targets: ['rabbitmq-exporter:9419']
+      - targets: ['host.docker.internal:8083']
         labels:
-          service: 'rabbitmq'
+          service: 'submission-service'
 
-  # Docker 容器监控（使用 cAdvisor）
-  - job_name: 'cadvisor'
+  # AI 服务
+  - job_name: 'ai-service'
+    metrics_path: '/actuator/prometheus'
     static_configs:
-      - targets: ['cadvisor:8089']
+      - targets: ['host.docker.internal:8084']
         labels:
-          service: 'docker-containers'
-    # 注意：如果 cAdvisor 端口不是 8080，请修改上面的端口号
+          service: 'ai-service'
 
+  # 判题服务
+  - job_name: 'judge-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['host.docker.internal:8085']
+        labels:
+          service: 'judge-service'
+
+  # 竞赛服务
+  - job_name: 'contest-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['host.docker.internal:8086']
+        labels:
+          service: 'contest-service'

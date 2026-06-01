@@ -1,6 +1,8 @@
 package xiaozhu.problem.service.distribution;
 
 import xiaozhu.common.dto.ProblemGenerationResponse;
+import xiaozhu.common.dto.ProblemPageRequest;
+import xiaozhu.common.dto.ProblemPageResponse;
 
 import java.util.List;
 
@@ -59,4 +61,13 @@ public interface ProblemDeliveryService {
      * @return 题目详情，未找到返回 null
      */
     ProblemGenerationResponse getProblemByContentHash(String contentHash, String userKey);
+
+    /**
+     * 分页查询题目（支持搜索和筛选）
+     *
+     * @param userKey 用户标识
+     * @param request 分页请求参数
+     * @return 分页响应
+     */
+    ProblemPageResponse listProblemsPaged(String userKey, ProblemPageRequest request);
 }

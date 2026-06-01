@@ -1,6 +1,8 @@
 package xiaozhu.judge.codesandbox;
 
 import jakarta.annotation.PostConstruct;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -29,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -52,16 +55,22 @@ public class CodeSandboxTemplate {
     private final Path hostBaseDir;
     private final Path globalCodeDir;
     private final RunCodeExceptionConfig errorConfig;
+    private final MeterRegistry meterRegistry;
+    
+    // 缓存 Timer 实例，避免每次都创建新实例
+    private final Map<String, Timer> executionTimers = new ConcurrentHashMap<>();
 
     public CodeSandboxTemplate(MultiLanguageDockerSandBoxPool containerPool,
                                DockerClient dockerClient,
                                SandboxPoolConfig sandboxConfig,
-                               RunCodeExceptionConfig errorConfig) {
+                               RunCodeExceptionConfig errorConfig,
+                               MeterRegistry meterRegistry) {
         this.containerPool = containerPool;
         this.dockerClient = dockerClient;
         this.hostBaseDir = Paths.get(sandboxConfig.getHostCodeBaseDir()).toAbsolutePath().normalize();
         this.globalCodeDir = this.hostBaseDir.resolve(GLOBAL_CODE_DIR_NAME);
         this.errorConfig = errorConfig;
+        this.meterRegistry = meterRegistry;
     }
 
     @PostConstruct
@@ -422,6 +431,9 @@ public class CodeSandboxTemplate {
             // 获取进程内存使用（更精确，只计算用户代码的内存）
             long finalMemory = getProcessMemoryUsage(containerId);
             message.setMemory(Math.max(0, finalMemory - baseline));
+
+            // 记录执行时间到 Prometheus
+            recordExecutionTime(language, needCompile, message.getTime());
         } catch (TimeoutException e) {
             message.setExitValue(-1L);
             message.setErrorMessage("执行超时");
@@ -701,5 +713,28 @@ public class CodeSandboxTemplate {
             log.warn("统计用例文件失败: {}", e.getMessage());
             return 0;
         }
+    }
+
+    /**
+     * 记录代码执行时间到 Prometheus，用于监控执行延迟
+     */
+    private void recordExecutionTime(String language, boolean needCompile, long durationMs) {
+        if (meterRegistry == null) {
+            log.warn("MeterRegistry 为空，无法记录执行时间指标");
+            return;
+        }
+        
+        String timerKey = language + "_" + needCompile;
+        Timer timer = executionTimers.computeIfAbsent(timerKey, key -> 
+            Timer.builder("judge.sandbox.execution.duration")
+                    .description("代码沙箱执行耗时")
+                    .tag("language", language)
+                    .tag("compile", String.valueOf(needCompile))
+                    .publishPercentileHistogram(true)
+                    .register(meterRegistry)
+        );
+        
+        timer.record(durationMs, TimeUnit.MILLISECONDS);
+        log.debug("已记录执行时间指标: language={}, compile={}, duration={}ms", language, needCompile, durationMs);
     }
 }

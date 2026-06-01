@@ -208,6 +208,14 @@ public class MemoryTool {
      *
      * 注意：当返回 passed=true 且 score>=60 时，会自动保存测试用例上下文。
      * 如果 Agent 最终没有调用 recordSuccessCase，系统会自动补调。
+     *
+     * @param testCasesJson 测试用例 JSON
+     * @param problemHash 题目的 contentHash
+     * @param problemTitle 题目标题
+     * @param problemType 题目类型（来自 analyzeProblemTypeLocal）
+     * @param algorithmKeyword 算法关键词（来自 analyzeProblemTypeLocal）
+     * @param solutionCode 使用 primarySolutionCode
+     * @param suspiciousCaseIndicesJson 可疑用例索引列表（JSON 数组格式），来自 runGeneratorCodeWithVerification
      */
     @Tool(name = "reviewTestCases")
     public String reviewTestCases(
@@ -216,16 +224,40 @@ public class MemoryTool {
             @P(value = "problemTitle") String problemTitle,
             @P(value = "problemType") String problemType,
             @P(value = "algorithmKeyword") String algorithmKeyword,
-            @P(value = "solutionCode") String solutionCode) {
+            @P(value = "solutionCode") String solutionCode,
+            @P(value = "suspiciousCaseIndicesJson", required = false) String suspiciousCaseIndicesJson) {
 
         log.info("[MemoryTool] 评审测试用例");
 
         try {
+            // 解析可疑用例索引
+            java.util.List<Integer> suspiciousIndices = new java.util.ArrayList<>();
+            if (suspiciousCaseIndicesJson != null && !suspiciousCaseIndicesJson.isBlank()) {
+                try {
+                    suspiciousIndices = JSON.parseArray(suspiciousCaseIndicesJson, Integer.class);
+                    log.info("[MemoryTool] 收到可疑用例索引: {}", suspiciousIndices);
+                } catch (Exception e) {
+                    log.warn("[MemoryTool] 解析可疑用例索引失败: {}, 忽略", e.getMessage());
+                }
+            }
+
             String jsonToParse = testCasesJson;
             if (testCasesJson != null && testCasesJson.trim().startsWith("[")) {
                 jsonToParse = "{\"testCases\":" + testCasesJson + "}";
             }
             TestCaseGenerationResponse response = JSON.parseObject(jsonToParse, TestCaseGenerationResponse.class);
+
+            // 标记可疑用例
+            if (!suspiciousIndices.isEmpty() && response.getTestCases() != null) {
+                for (int i = 0; i < response.getTestCases().size(); i++) {
+                    if (suspiciousIndices.contains(i)) {
+                        TestCaseGenerationResponse.TestCaseDetail tc = response.getTestCases().get(i);
+                        tc.setSuspicious(true);
+                        tc.setSuspiciousReason("双AI验证不一致，建议人工审核或重新生成");
+                    }
+                }
+            }
+
             ReviewResult result = testCaseReviewer.review(response);
 
             log.info("[MemoryTool] 评审完成，passed={}, score={}", result.isPassed(), result.getScore());
@@ -395,4 +427,76 @@ public class MemoryTool {
     // 内部类
     private record RecordResult(boolean success, String message, String error) {}
     private record ProblemAnalysis(String problemType, String keywords, String error) {}
+
+    /**
+     * 合并查询相似案例（成功+失败）
+     * 替代 getSimilarSuccessCases + getSimilarFailureCases，减少一次工具调用
+     */
+    @Tool(name = "getSimilarCases")
+    public String getSimilarCases(
+            @P("problemType") String problemType,
+            @P("keywords") String keywords,
+            @P(value = "limit") Integer limit) {
+
+        log.info("[MemoryTool] 获取相似案例，problemType={}, keywords={}, limit={}", problemType, keywords, limit);
+
+        try {
+            // 查询成功案例（只返回摘要，不返回完整 solutionCode）
+            List<SuccessCase> successCases = caseSearchService.findSimilarSuccessCases(
+                    problemType, keywords, limit);
+
+            // 查询失败案例
+            List<FailureCase> failureCases = caseSearchService.findSimilarFailureCases(
+                    problemType, keywords, limit);
+
+            // 构建结果（只返回摘要信息）
+            List<Map<String, Object>> successSummaries = new ArrayList<>();
+            for (SuccessCase sc : successCases) {
+                successSummaries.add(Map.of(
+                        "problemHash", sc.getProblemHash() != null ? sc.getProblemHash() : "",
+                        "problemType", sc.getProblemType() != null ? sc.getProblemType() : "",
+                        "algorithmKeyword", sc.getAlgorithmKeyword() != null ? sc.getAlgorithmKeyword() : "",
+                        "testcaseCount", sc.getTestcaseCount() != null ? sc.getTestcaseCount() : 0,
+                        "successRate", sc.getSuccessRate() != null ? sc.getSuccessRate().doubleValue() : 0.0,
+                        "createdAt", sc.getCreatedAt() != null ? sc.getCreatedAt().toString() : ""
+                ));
+            }
+
+            List<Map<String, Object>> failureSummaries = new ArrayList<>();
+            for (FailureCase fc : failureCases) {
+                failureSummaries.add(Map.of(
+                        "problemHash", fc.getProblemHash() != null ? fc.getProblemHash() : "",
+                        "problemType", fc.getProblemType() != null ? fc.getProblemType() : "",
+                        "failureReason", fc.getFailureReason() != null ? fc.getFailureReason() : "",
+                        "retryCount", fc.getRetryCount() != null ? fc.getRetryCount() : 0,
+                        "createdAt", fc.getCreatedAt() != null ? fc.getCreatedAt().toString() : ""
+                ));
+            }
+
+            SimilarCasesResult result = new SimilarCasesResult(
+                    successSummaries,
+                    failureSummaries,
+                    successSummaries.size(),
+                    failureSummaries.size()
+            );
+
+            log.info("[MemoryTool] 相似案例查询完成，成功={}, 失败={}", result.totalSuccess(), result.totalFailure());
+            return JSON.toJSONString(result);
+
+        } catch (Exception e) {
+            log.error("[MemoryTool] 获取相似案例异常: {}", e.getMessage(), e);
+            return JSON.toJSONString(new SimilarCasesResult(
+                    new ArrayList<>(), new ArrayList<>(), 0, 0));
+        }
+    }
+
+    /**
+     * 相似案例查询结果
+     */
+    private record SimilarCasesResult(
+            List<Map<String, Object>> successCases,
+            List<Map<String, Object>> failureCases,
+            int totalSuccess,
+            int totalFailure
+    ) {}
 }

@@ -15,6 +15,9 @@ public class SubmissionResponse {
     private Long submissionId;
     private Long userId;
     private Long questionId;
+    private String code;  // 提交的代码
+    private String title;
+    private Integer difficulty;
     private String language;
     private JudgeStatus judgeStatus;
     private String judgeResult;
@@ -26,5 +29,12 @@ public class SubmissionResponse {
     private List<String> outputList;
     private LocalDateTime createTime;
     private LocalDateTime judgeTime;
+    // 完整题目详情
+    private String description;
+    private String inputDesc;
+    private String outputDesc;
+    private String examples;
+    private Integer timeLimit;
+    private Integer memoryLimit;
 }
 

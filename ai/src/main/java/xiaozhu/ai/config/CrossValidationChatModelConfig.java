@@ -58,7 +58,7 @@ public class CrossValidationChatModelConfig {
      * 交叉验证请求超时时间（秒）
      * 交叉验证模型需要独立阅读题目并生成用例，prompt 较长
      */
-    private Integer requestTimeoutSeconds = 120;
+    private Integer requestTimeoutSeconds = 300;
 
     /**
      * 交叉验证专用模型

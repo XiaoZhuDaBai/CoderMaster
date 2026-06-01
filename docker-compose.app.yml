@@ -1,0 +1,170 @@
+version: '3.8'
+
+# =====================================================
+# 微服务应用 - 部署在服务器 B
+# 包含：Gateway、User、Problem、Submission、AI、Judge
+# =====================================================
+
+services:
+  # API 网关
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    container_name: oj-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      - NACOS_SERVER_ADDR=${NACOS_SERVER_ADDR}
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - JWT_SECRET=${JWT_SECRET}
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+    networks:
+      - oj-app-network
+
+  # 用户服务
+  user:
+    build:
+      context: ./user
+      dockerfile: Dockerfile
+    container_name: oj-user
+    ports:
+      - "8081:8081"
+    environment:
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - NACOS_SERVER_ADDR=${NACOS_SERVER_ADDR}
+      - JWT_SECRET=${JWT_SECRET}
+      - MAIL_HOST=${MAIL_HOST}
+      - MAIL_PORT=${MAIL_PORT}
+      - MAIL_USERNAME=${MAIL_USERNAME}
+      - MAIL_PASSWORD=${MAIL_PASSWORD}
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+    networks:
+      - oj-app-network
+
+  # 题目服务
+  problem:
+    build:
+      context: ./problem
+      dockerfile: Dockerfile
+    container_name: oj-problem
+    ports:
+      - "8082:8082"
+    environment:
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - NACOS_SERVER_ADDR=${NACOS_SERVER_ADDR}
+      - RABBITMQ_HOST=${RABBITMQ_HOST}
+      - RABBITMQ_PORT=${RABBITMQ_PORT}
+      - RABBITMQ_USERNAME=${RABBITMQ_USERNAME}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+      - RABBITMQ_VHOST=${RABBITMQ_VHOST}
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+    networks:
+      - oj-app-network
+
+  # 提交服务
+  submission:
+    build:
+      context: ./submission
+      dockerfile: Dockerfile
+    container_name: oj-submission
+    ports:
+      - "8083:8083"
+    environment:
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - NACOS_SERVER_ADDR=${NACOS_SERVER_ADDR}
+      - RABBITMQ_HOST=${RABBITMQ_HOST}
+      - RABBITMQ_PORT=${RABBITMQ_PORT}
+      - RABBITMQ_USERNAME=${RABBITMQ_USERNAME}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+      - RABBITMQ_VHOST=${RABBITMQ_VHOST}
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+    networks:
+      - oj-app-network
+
+  # AI 服务
+  ai:
+    build:
+      context: ./ai
+      dockerfile: Dockerfile
+    container_name: oj-ai
+    ports:
+      - "8084:8084"
+    environment:
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - NACOS_SERVER_ADDR=${NACOS_SERVER_ADDR}
+      - RABBITMQ_HOST=${RABBITMQ_HOST}
+      - RABBITMQ_PORT=${RABBITMQ_PORT}
+      - RABBITMQ_USERNAME=${RABBITMQ_USERNAME}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+      - RABBITMQ_VHOST=${RABBITMQ_VHOST}
+      - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - CROSS_VALIDATION_BASE_URL=${CROSS_VALIDATION_BASE_URL}
+      - CROSS_VALIDATION_API_KEY=${CROSS_VALIDATION_API_KEY}
+      - CROSS_VALIDATION_MODEL_NAME=${CROSS_VALIDATION_MODEL_NAME}
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+    networks:
+      - oj-app-network
+
+  # 判题服务
+  judge:
+    build:
+      context: ./judge
+      dockerfile: Dockerfile
+    container_name: oj-judge
+    ports:
+      - "8085:8085"
+    environment:
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - NACOS_SERVER_ADDR=${NACOS_SERVER_ADDR}
+      - RABBITMQ_HOST=${RABBITMQ_HOST}
+      - RABBITMQ_PORT=${RABBITMQ_PORT}
+      - RABBITMQ_USERNAME=${RABBITMQ_USERNAME}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+      - RABBITMQ_VHOST=${RABBITMQ_VHOST}
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - TZ=Asia/Shanghai
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    networks:
+      - oj-app-network
+
+networks:
+  oj-app-network:
+    name: oj-app-network
+    driver: bridge

@@ -90,6 +90,17 @@ public class TestCaseGenerationResponse implements Serializable {
          * 该用例内存限制（MB，NULL使用题目默认值）
          */
         private Integer memoryLimit;
+
+        /**
+         * 可疑标记（用于人工复核）
+         * true - 双AI验证不一致，需人工审核
+         */
+        private Boolean suspicious;
+
+        /**
+         * 可疑原因（当 suspicious=true 时填充）
+         */
+        private String suspiciousReason;
     }
 }
 

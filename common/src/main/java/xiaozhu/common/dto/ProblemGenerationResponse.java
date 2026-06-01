@@ -66,6 +66,12 @@ public class ProblemGenerationResponse implements Serializable {
     /** 题目内容哈希，用于去重 */
     private String contentHash;
 
+    /** 题目生成时间（毫秒时间戳） */
+    private Long generatedAt;
+
+    /** 是否新题目（24小时内生成） */
+    private Boolean isNew;
+
     @Data
     @NoArgsConstructor
     @AllArgsConstructor

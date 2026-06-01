@@ -2,13 +2,12 @@ package xiaozhu.problem.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.util.StringUtils;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 import xiaozhu.common.annotation.RequireLogin;
 import xiaozhu.common.comm.ResponseResult;
 import xiaozhu.common.dto.ProblemGenerationResponse;
+import xiaozhu.common.dto.ProblemPageRequest;
+import xiaozhu.common.dto.ProblemPageResponse;
 import xiaozhu.problem.service.distribution.ProblemDeliveryService;
 
 import java.util.List;
@@ -38,5 +37,17 @@ public class ProblemDeliveryController {
         }
         List<ProblemGenerationResponse> problems = problemDeliveryService.listNewProblems(userKey);
         return ResponseResult.success(problems);
+    }
+
+    @RequireLogin
+    @PostMapping("/paged/{userKey}")
+    public ResponseResult<ProblemPageResponse> listProblemsPaged(
+            @PathVariable String userKey,
+            @RequestBody ProblemPageRequest request) {
+        if (!StringUtils.hasText(userKey)) {
+            return ResponseResult.fail("用户标识不能为空");
+        }
+        ProblemPageResponse response = problemDeliveryService.listProblemsPaged(userKey, request);
+        return ResponseResult.success(response);
     }
 }

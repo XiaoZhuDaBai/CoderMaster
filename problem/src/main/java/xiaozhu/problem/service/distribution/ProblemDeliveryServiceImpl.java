@@ -4,13 +4,15 @@ import com.alibaba.fastjson2.JSON;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 import xiaozhu.common.constant.RedisKeyConstant;
 import xiaozhu.common.dto.ProblemGenerationResponse;
+import xiaozhu.common.dto.ProblemPageRequest;
+import xiaozhu.common.dto.ProblemPageResponse;
 import xiaozhu.problem.entity.Question;
 import xiaozhu.problem.mapper.QuestionMapper;
-import xiaozhu.problem.service.internal.CacheAsideTemplate;
 
 import java.time.Instant;
 import java.util.*;
@@ -27,12 +29,10 @@ public class ProblemDeliveryServiceImpl implements ProblemDeliveryService {
     private static final long CACHE_TTL_DAYS = 7L;
     private static final long DETAIL_TTL_DAYS = 30L;
     private static final long NEW_PROBLEM_THRESHOLD_HOURS = 24L;
+    private static final int MAX_SCAN_COUNT = 1000;
 
     private final RedisTemplate<String, Object> redisTemplate;
     private final QuestionMapper questionMapper;
-    private final CacheAsideTemplate cacheAsideTemplate;
-
-    private record ProblemWithTime(ProblemGenerationResponse response, long time) {}
 
     @Override
     public void cacheProblemFromSource(String userKey, String contentHash, long generatedAt) {
@@ -62,100 +62,37 @@ public class ProblemDeliveryServiceImpl implements ProblemDeliveryService {
 
     @Override
     public List<ProblemGenerationResponse> listProblems(String userKey) {
-        // 1. 从索引获取 contentHash 列表
-        Set<Object> hashes = redisTemplate.opsForSet().members(buildIndexKey(userKey));
-        if (CollectionUtils.isEmpty(hashes)) {
-            loadFromIndex(userKey);
-            hashes = redisTemplate.opsForSet().members(buildIndexKey(userKey));
-        }
-        if (CollectionUtils.isEmpty(hashes)) {
+        List<ProblemWithScore> items = getSortedIndexItems(userKey);
+        if (CollectionUtils.isEmpty(items)) {
             return Collections.emptyList();
         }
-
-        // 2. 按需读取每个题目的详情
-        List<ProblemGenerationResponse> result = new ArrayList<>();
-        for (Object hashObj : hashes) {
-            String hash = hashObj.toString();
-            ProblemGenerationResponse problem = getProblemDetail(hash);
-            if (problem != null) {
-                result.add(problem);
-            }
-        }
-        return result;
+        return fetchProblemsByHashes(items, userKey);
     }
 
     @Override
     public List<ProblemGenerationResponse> listProblemsSorted(String userKey) {
-        // 1. 从索引获取 contentHash 列表
-        Set<Object> hashes = redisTemplate.opsForSet().members(buildIndexKey(userKey));
-        if (CollectionUtils.isEmpty(hashes)) {
-            loadFromIndex(userKey);
-            hashes = redisTemplate.opsForSet().members(buildIndexKey(userKey));
-        }
-        if (CollectionUtils.isEmpty(hashes)) {
-            return Collections.emptyList();
-        }
-
-        List<String> hashList = hashes.stream()
-                .filter(Objects::nonNull)
-                .map(Object::toString)
-                .toList();
-
-        // 2. 获取时间戳
-        String timeKey = buildTimeKey(userKey);
-        List<Object> timeObjects = redisTemplate.opsForHash().multiGet(timeKey, new ArrayList<>(hashList));
-
-        // 3. 按需读取每个题目的详情
-        List<ProblemWithTime> problemsWithTime = new ArrayList<>();
-        for (int i = 0; i < hashList.size(); i++) {
-            String hash = hashList.get(i);
-            long time = parseTime(timeObjects.get(i), hash);
-            ProblemGenerationResponse resp = getProblemDetail(hash);
-            if (resp != null) {
-                problemsWithTime.add(new ProblemWithTime(resp, time));
-            }
-        }
-
-        // 4. 按时间排序
-        problemsWithTime.sort(Comparator.comparingLong((ProblemWithTime p) -> p.time).reversed());
-        return problemsWithTime.stream().map(p -> p.response).collect(Collectors.toList());
+        return listProblems(userKey);
     }
 
     @Override
     public List<ProblemGenerationResponse> listNewProblems(String userKey) {
-        String newKey = buildNewKey(userKey);
-        Set<Object> hashKeys = redisTemplate.opsForSet().members(newKey);
-        if (CollectionUtils.isEmpty(hashKeys)) {
-            return Collections.emptyList();
-        }
-
-        List<String> hashList = hashKeys.stream()
-                .filter(Objects::nonNull)
-                .map(Object::toString)
-                .toList();
-
         long now = Instant.now().toEpochMilli();
         long threshold = now - HOURS.toMillis(NEW_PROBLEM_THRESHOLD_HOURS);
-        String timeKey = buildTimeKey(userKey);
-
-        List<Object> timeObjects = redisTemplate.opsForHash().multiGet(timeKey, new ArrayList<>(hashList));
-
-        List<ProblemGenerationResponse> result = new ArrayList<>();
-        for (int i = 0; i < hashList.size(); i++) {
-            String hash = hashList.get(i);
-            Object timeObj = timeObjects.get(i);
-            if (timeObj == null) {
-                continue;
-            }
-            long generatedAt = parseTime(timeObj, hash);
-            if (generatedAt > 0 && generatedAt >= threshold) {
-                ProblemGenerationResponse resp = getProblemDetail(hash);
-                if (resp != null) {
-                    result.add(resp);
-                }
-            }
+        
+        List<ProblemWithScore> items = getSortedIndexItems(userKey);
+        if (CollectionUtils.isEmpty(items)) {
+            return Collections.emptyList();
         }
-        return result;
+        
+        List<ProblemWithScore> newItems = items.stream()
+                .filter(item -> item.score >= threshold)
+                .toList();
+        
+        if (newItems.isEmpty()) {
+            return Collections.emptyList();
+        }
+        
+        return fetchProblemsByHashes(newItems, userKey);
     }
 
     @Override
@@ -164,87 +101,322 @@ public class ProblemDeliveryServiceImpl implements ProblemDeliveryService {
             return null;
         }
         String redisKey = RedisKeyConstant.QUESTION_PREFIX + userKey + ":" + contentHash;
-        return cacheAsideTemplate.get(
-            redisKey,
-            () -> {
-                Question question = questionMapper.selectOne(
-                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Question>()
-                        .eq(Question::getContentHash, contentHash)
-                );
-                return question != null ? convertQuestionToResponse(question) : null;
-            },
-            ProblemGenerationResponse.class,
-            CACHE_TTL_DAYS,
-            DAYS
-        );
-    }
-
-    /**
-     * 按需获取题目详情，Key 失效时自动回源到 MySQL
-     */
-    private ProblemGenerationResponse getProblemDetail(String contentHash) {
-        String detailKey = buildDetailKey(contentHash);
-        Object cached = redisTemplate.opsForValue().get(detailKey);
+        Object cached = redisTemplate.opsForValue().get(redisKey);
         if (cached != null) {
             return convertToProblem(cached);
         }
-
-        // Key 失效，回源到 MySQL
-        log.info("题目详情 Key 失效，开始回源，contentHash={}", contentHash);
+        
         Question question = questionMapper.selectOne(
             new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Question>()
                 .eq(Question::getContentHash, contentHash)
         );
         if (question == null) {
-            log.warn("MySQL 中也不存在该题目，contentHash={}", contentHash);
             return null;
         }
-
+        
         ProblemGenerationResponse response = convertQuestionToResponse(question);
-
-        // 回写 Redis，详情独立 TTL
-        redisTemplate.opsForValue().set(detailKey, response, DETAIL_TTL_DAYS, DAYS);
-        log.info("题目详情已回写 Redis，contentHash={}", contentHash);
-
+        redisTemplate.opsForValue().set(redisKey, response, CACHE_TTL_DAYS, DAYS);
         return response;
     }
 
-    private void loadFromIndex(String userKey) {
-        String indexKey = RedisKeyConstant.QUESTION_USER_INDEX_PREFIX + userKey;
-        Set<Object> hashes = redisTemplate.opsForSet().members(indexKey);
-        if (CollectionUtils.isEmpty(hashes)) {
-            return;
+    @Override
+    public ProblemPageResponse listProblemsPaged(String userKey, ProblemPageRequest request) {
+        int page = request.getPage() != null && request.getPage() > 0 ? request.getPage() : 1;
+        int pageSize = request.getPageSize() != null && request.getPageSize() > 0 ? request.getPageSize() : 10;
+        int offset = (page - 1) * pageSize;
+        
+        boolean hasFilter = hasText(request.getSearchKeyword()) 
+                || request.getDifficulty() != null 
+                || (request.getTagNames() != null && !request.getTagNames().isEmpty());
+        
+        if (!hasFilter) {
+            return queryPagedWithoutFilter(userKey, request, page, pageSize, offset);
+        } else {
+            return queryPagedWithFilter(userKey, request, page, pageSize);
         }
-        hashes.stream()
-                .filter(Objects::nonNull)
-                .map(Object::toString)
-                .forEach(hash -> cacheProblemFromSource(userKey, hash));
+    }
+
+    private ProblemPageResponse queryPagedWithoutFilter(String userKey, ProblemPageRequest request, 
+            int page, int pageSize, int offset) {
+        String sortedKey = buildSortedIndexKey(userKey);
+        
+        long total = Optional.ofNullable(redisTemplate.opsForZSet().zCard(sortedKey)).orElse(0L);
+        if (total == 0) {
+            return emptyPageResponse(page, pageSize);
+        }
+        
+        Set<ZSetOperations.TypedTuple<Object>> tuples = redisTemplate.opsForZSet()
+                .reverseRangeWithScores(sortedKey, offset, offset + pageSize - 1);
+        
+        if (CollectionUtils.isEmpty(tuples)) {
+            return emptyPageResponse(page, pageSize);
+        }
+        
+        List<ProblemWithScore> items = tuples.stream()
+                .map(t -> new ProblemWithScore(t.getValue().toString(), t.getScore() != null ? t.getScore().longValue() : 0L))
+                .toList();
+        
+        List<ProblemGenerationResponse> problems = fetchProblemsByHashes(items, userKey);
+        
+        ProblemPageResponse response = new ProblemPageResponse();
+        response.setProblems(problems);
+        response.setTotal(total);
+        response.setPage(page);
+        response.setPageSize(pageSize);
+        response.setTotalPages((int) Math.ceil((double) total / pageSize));
+        response.setAvailableTags(Collections.emptyList());
+        
+        return response;
+    }
+
+    private ProblemPageResponse queryPagedWithFilter(String userKey, ProblemPageRequest request,
+            int page, int pageSize) {
+        List<ProblemWithScore> allItems = getSortedIndexItems(userKey);
+        if (CollectionUtils.isEmpty(allItems)) {
+            return emptyPageResponse(page, pageSize);
+        }
+        
+        List<ProblemGenerationResponse> allProblems = fetchProblemsByHashes(allItems, userKey);
+        
+        Map<String, ProblemGenerationResponse> problemMap = new HashMap<>();
+        Set<String> allTags = new HashSet<>();
+        
+        for (int i = 0; i < allItems.size() && i < allProblems.size(); i++) {
+            ProblemGenerationResponse p = allProblems.get(i);
+            if (p != null) {
+                p.setGeneratedAt(allItems.get(i).score);
+                p.setIsNew(isNewProblem(allItems.get(i).score));
+                problemMap.put(allItems.get(i).hash, p);
+                if (p.getTagNames() != null) {
+                    allTags.addAll(p.getTagNames());
+                }
+            }
+        }
+        
+        List<ProblemWithScore> filtered = allItems.stream()
+                .filter(item -> {
+                    ProblemGenerationResponse p = problemMap.get(item.hash);
+                    return p != null && matchesFilter(p, request);
+                })
+                .toList();
+        
+        long total = filtered.size();
+        int totalPages = (int) Math.ceil((double) total / pageSize);
+        int fromIndex = Math.min((page - 1) * pageSize, (int) total);
+        int toIndex = Math.min(fromIndex + pageSize, (int) total);
+        
+        List<ProblemGenerationResponse> pagedList = fromIndex < toIndex
+                ? filtered.subList(fromIndex, toIndex).stream()
+                        .map(item -> problemMap.get(item.hash))
+                        .filter(Objects::nonNull)
+                        .toList()
+                : Collections.emptyList();
+        
+        ProblemPageResponse response = new ProblemPageResponse();
+        response.setProblems(pagedList);
+        response.setTotal(total);
+        response.setPage(page);
+        response.setPageSize(pageSize);
+        response.setTotalPages(totalPages);
+        response.setAvailableTags(new ArrayList<>(allTags).stream().sorted().toList());
+        
+        return response;
+    }
+
+    private List<ProblemWithScore> getSortedIndexItems(String userKey) {
+        String sortedKey = buildSortedIndexKey(userKey);
+        Set<ZSetOperations.TypedTuple<Object>> tuples = redisTemplate.opsForZSet()
+                .reverseRangeWithScores(sortedKey, 0, MAX_SCAN_COUNT - 1);
+        
+        if (CollectionUtils.isEmpty(tuples)) {
+            return Collections.emptyList();
+        }
+        
+        return tuples.stream()
+                .map(t -> new ProblemWithScore(t.getValue().toString(), t.getScore() != null ? t.getScore().longValue() : 0L))
+                .toList();
+    }
+
+    private List<ProblemGenerationResponse> fetchProblemsByHashes(List<ProblemWithScore> items, String userKey) {
+        if (CollectionUtils.isEmpty(items)) {
+            return Collections.emptyList();
+        }
+        
+        List<String> hashes = items.stream().map(item -> item.hash).toList();
+        
+        List<String> detailKeys = hashes.stream()
+                .map(this::buildDetailKey)
+                .toList();
+        
+        List<Object> cachedList = redisTemplate.opsForValue().multiGet(detailKeys);
+        
+        List<String> missHashes = new ArrayList<>();
+        List<Integer> missIndices = new ArrayList<>();
+        
+        for (int i = 0; i < hashes.size(); i++) {
+            Object cached = cachedList != null && i < cachedList.size() ? cachedList.get(i) : null;
+            if (cached == null) {
+                missHashes.add(hashes.get(i));
+                missIndices.add(i);
+            }
+        }
+        
+        Map<String, ProblemGenerationResponse> resultMap = new HashMap<>();
+        Map<String, Integer> hashToIndex = new HashMap<>();
+        for (int i = 0; i < hashes.size(); i++) {
+            hashToIndex.put(hashes.get(i), i);
+        }
+        
+        for (int i = 0; i < hashes.size(); i++) {
+            Object cached = cachedList != null && i < cachedList.size() ? cachedList.get(i) : null;
+            if (cached != null) {
+                ProblemGenerationResponse p = convertToProblem(cached);
+                if (p != null) {
+                    p.setGeneratedAt(items.get(i).score);
+                    p.setIsNew(isNewProblem(items.get(i).score));
+                    resultMap.put(hashes.get(i), p);
+                }
+            }
+        }
+        
+        if (!missHashes.isEmpty()) {
+            List<Question> questions = questionMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Question>()
+                    .in(Question::getContentHash, missHashes)
+            );
+            
+            List<String> foundHashes = new ArrayList<>();
+            Map<String, ProblemGenerationResponse> missMap = new HashMap<>();
+            
+            for (Question q : questions) {
+                ProblemGenerationResponse p = convertQuestionToResponse(q);
+                p.setGeneratedAt(0L);
+                missMap.put(q.getContentHash(), p);
+                foundHashes.add(q.getContentHash());
+            }
+            
+            List<String> notFoundHashes = missHashes.stream()
+                    .filter(h -> !foundHashes.contains(h))
+                    .toList();
+            
+            if (!notFoundHashes.isEmpty()) {
+                cleanupStaleIndex(userKey, notFoundHashes);
+            }
+            
+            Map<String, ProblemGenerationResponse> writeBackMap = new HashMap<>();
+            for (String hash : missHashes) {
+                ProblemGenerationResponse p = missMap.get(hash);
+                if (p != null) {
+                    Integer idx = hashToIndex.get(hash);
+                    if (idx != null && idx < items.size()) {
+                        p.setGeneratedAt(items.get(idx).score);
+                        p.setIsNew(isNewProblem(items.get(idx).score));
+                    }
+                    resultMap.put(hash, p);
+                    writeBackMap.put(hash, p);
+                }
+            }
+            
+            if (!writeBackMap.isEmpty()) {
+                writeBackToRedis(writeBackMap);
+            }
+        }
+        
+        List<ProblemGenerationResponse> result = new ArrayList<>();
+        for (ProblemWithScore item : items) {
+            result.add(resultMap.get(item.hash));
+        }
+        
+        return result;
+    }
+
+    private void cleanupStaleIndex(String userKey, List<String> staleHashes) {
+        String sortedKey = buildSortedIndexKey(userKey);
+        for (String hash : staleHashes) {
+            redisTemplate.opsForZSet().remove(sortedKey, hash);
+            log.warn("清理过期索引，userKey={}, contentHash={}", userKey, hash);
+        }
+    }
+
+    private void writeBackToRedis(Map<String, ProblemGenerationResponse> data) {
+        for (Map.Entry<String, ProblemGenerationResponse> entry : data.entrySet()) {
+            String detailKey = buildDetailKey(entry.getKey());
+            redisTemplate.opsForValue().set(detailKey, entry.getValue(), DETAIL_TTL_DAYS, DAYS);
+        }
+    }
+
+    private boolean matchesFilter(ProblemGenerationResponse problem, ProblemPageRequest request) {
+        if (hasText(request.getSearchKeyword())) {
+            String keyword = request.getSearchKeyword().toLowerCase();
+            boolean matches = false;
+            if (problem.getTitle() != null && problem.getTitle().toLowerCase().contains(keyword)) {
+                matches = true;
+            }
+            if (problem.getDescription() != null && problem.getDescription().toLowerCase().contains(keyword)) {
+                matches = true;
+            }
+            if (problem.getTagNames() != null) {
+                for (String tag : problem.getTagNames()) {
+                    if (tag.toLowerCase().contains(keyword)) {
+                        matches = true;
+                        break;
+                    }
+                }
+            }
+            if (!matches) {
+                return false;
+            }
+        }
+        
+        if (request.getDifficulty() != null) {
+            if (!request.getDifficulty().equals(problem.getDifficulty())) {
+                return false;
+            }
+        }
+        
+        if (request.getTagNames() != null && !request.getTagNames().isEmpty()) {
+            if (problem.getTagNames() == null) {
+                return false;
+            }
+            boolean hasTag = false;
+            for (String tag : problem.getTagNames()) {
+                if (request.getTagNames().contains(tag)) {
+                    hasTag = true;
+                    break;
+                }
+            }
+            if (!hasTag) {
+                return false;
+            }
+        }
+        
+        return true;
+    }
+
+    private ProblemPageResponse emptyPageResponse(int page, int pageSize) {
+        ProblemPageResponse response = new ProblemPageResponse();
+        response.setProblems(Collections.emptyList());
+        response.setTotal(0);
+        response.setPage(page);
+        response.setPageSize(pageSize);
+        response.setTotalPages(0);
+        response.setAvailableTags(Collections.emptyList());
+        return response;
     }
 
     private void saveToDeliveryBucket(String userKey, String contentHash,
             ProblemGenerationResponse response, boolean isNew, long generatedAt) {
-        // 1. 写入索引 Set
-        String indexKey = buildIndexKey(userKey);
-        redisTemplate.opsForSet().add(indexKey, contentHash);
-
-        // 2. 写入详情 Key（各自独立 TTL）
+        response.setGeneratedAt(generatedAt);
+        response.setIsNew(isNew);
+        response.setContentHash(contentHash);
+        
+        String sortedKey = buildSortedIndexKey(userKey);
+        redisTemplate.opsForZSet().add(sortedKey, contentHash, generatedAt);
+        redisTemplate.expire(sortedKey, CACHE_TTL_DAYS, DAYS);
+        
         String detailKey = buildDetailKey(contentHash);
         redisTemplate.opsForValue().set(detailKey, response, DETAIL_TTL_DAYS, DAYS);
-
-        // 3. 写入时间戳 Hash
-        if (generatedAt > 0) {
-            String timeKey = buildTimeKey(userKey);
-            redisTemplate.opsForHash().put(timeKey, contentHash, generatedAt);
-            redisTemplate.expire(timeKey, CACHE_TTL_DAYS, DAYS);
-        }
-
-        // 4. 新题标识 Set
-        if (isNew) {
-            String newKey = buildNewKey(userKey);
-            redisTemplate.opsForSet().add(newKey, contentHash);
-            redisTemplate.expire(newKey, NEW_PROBLEM_THRESHOLD_HOURS, HOURS);
-        }
-
+        
         log.info("题目已写入传输区，userKey={}, contentHash={}, isNew={}, generatedAt={}",
                 userKey, contentHash, isNew, generatedAt);
     }
@@ -256,25 +428,6 @@ public class ProblemDeliveryServiceImpl implements ProblemDeliveryService {
         long now = Instant.now().toEpochMilli();
         long threshold = now - HOURS.toMillis(NEW_PROBLEM_THRESHOLD_HOURS);
         return generatedAt >= threshold;
-    }
-
-    private long parseTime(Object timeObj, String contentHash) {
-        if (timeObj == null) {
-            return 0L;
-        }
-        try {
-            if (timeObj instanceof Long) {
-                return (Long) timeObj;
-            } else if (timeObj instanceof String) {
-                return Long.parseLong((String) timeObj);
-            } else {
-                return Long.parseLong(timeObj.toString());
-            }
-        } catch (Exception e) {
-            log.warn("解析题目生成时间失败，contentHash={}, timeObj={}, error={}",
-                    contentHash, timeObj, e.getMessage());
-            return 0L;
-        }
     }
 
     private ProblemGenerationResponse convertToProblem(Object raw) {
@@ -299,32 +452,25 @@ public class ProblemDeliveryServiceImpl implements ProblemDeliveryService {
         response.setTimeLimit(question.getTimeLimit());
         response.setMemoryLimit(question.getMemoryLimit());
         response.setDifficulty(question.getDifficulty());
+        response.setContentHash(question.getContentHash());
         return response;
     }
-
-    // ==================== Key 构建方法 ====================
 
     private String buildProblemKey(String userKey, String contentHash) {
         return RedisKeyConstant.QUESTION_PREFIX + userKey + ":" + contentHash;
     }
 
-    private String buildIndexKey(String userKey) {
-        return RedisKeyConstant.QUESTION_DELIVERY_PREFIX + "index:" + userKey;
+    private String buildSortedIndexKey(String userKey) {
+        return RedisKeyConstant.QUESTION_DELIVERY_PREFIX + "sorted:" + userKey;
     }
 
     private String buildDetailKey(String contentHash) {
         return RedisKeyConstant.QUESTION_DELIVERY_PREFIX + "detail:" + contentHash;
     }
 
-    private String buildTimeKey(String userKey) {
-        return RedisKeyConstant.QUESTION_DELIVERY_PREFIX + "time:" + userKey;
-    }
-
-    private String buildNewKey(String userKey) {
-        return RedisKeyConstant.QUESTION_DELIVERY_PREFIX + "new:" + userKey;
-    }
-
     private boolean hasText(String str) {
         return str != null && !str.isBlank();
     }
+
+    private record ProblemWithScore(String hash, long score) {}
 }

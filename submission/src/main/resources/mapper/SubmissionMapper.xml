@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="xiaozhu.submission.mapper.SubmissionMapper">
+
+    <!-- 按题目标题模糊搜索查询 submission IDs -->
+    <select id="selectSubmissionIdsByTitle" resultType="java.lang.Long">
+        SELECT s.submission_id
+        FROM submission s
+        LEFT JOIN question q ON s.question_id = q.question_id
+        WHERE s.user_id = #{userId}
+          AND q.title LIKE CONCAT('%', #{title}, '%')
+    </select>
+
+</mapper>

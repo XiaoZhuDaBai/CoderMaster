@@ -26,6 +26,8 @@ public class ProblemPersistServiceImpl implements ProblemPersistService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Long persistToMySQL(String userKey, String contentHash) {
+        log.info("=== persistToMySQL 被调用 === userKey={}, contentHash={}", userKey, contentHash);
+        
         if (!hasText(userKey) || !hasText(contentHash)) {
             log.warn("用户标识或内容哈希为空，无法持久化题目 userKey={}, contentHash={}", userKey, contentHash);
             return null;
@@ -37,26 +39,40 @@ public class ProblemPersistServiceImpl implements ProblemPersistService {
                 .eq(Question::getContentHash, contentHash)
         );
         if (existing != null) {
-            log.debug("题目已存在，无需重复持久化，contentHash={}, questionId={}", contentHash, existing.getQuestionId());
+            log.info("题目已存在，无需重复持久化，contentHash={}, questionId={}", contentHash, existing.getQuestionId());
             return existing.getQuestionId();
         }
 
         // 从 Redis 读取题目内容
         String sourceKey = buildProblemKey(userKey, contentHash);
+        log.info("=== 构建 Redis key === sourceKey={}", sourceKey);
         Object cached = redisTemplate.opsForValue().get(sourceKey);
+        log.info("=== Redis 读取结果 === cached={}, isNull={}", cached != null ? "有数据" : "null", cached == null);
         if (cached == null) {
             log.warn("Redis 未找到题目数据，无法持久化 userKey={}, contentHash={}", userKey, contentHash);
             return null;
         }
 
         ProblemGenerationResponse response = convertToProblem(cached);
+        // 即使转换失败，也尝试落库（可能 JSON 解析失败但仍有基本数据）
         if (response == null) {
-            log.warn("题目数据转换失败，无法持久化 userKey={}, contentHash={}", userKey, contentHash);
-            return null;
+            log.error("题目数据转换完全失败，userKey={}, contentHash={}", userKey, contentHash);
+            // 不直接返回，继续尝试保存基本数据
+        } else {
+            // 打印详细日志，检查各字段是否有值
+            log.info("=== Redis 读取的题目数据 === title={}, description长度={}, inputDesc长度={}, outputDesc长度={}",
+                    response.getTitle(),
+                    response.getDescription() != null ? response.getDescription().length() : 0,
+                    response.getInputDesc() != null ? response.getInputDesc().length() : 0,
+                    response.getOutputDesc() != null ? response.getOutputDesc().length() : 0);
         }
 
         try {
             Question question = convertToQuestionEntity(response, contentHash);
+            log.info("=== 插入数据库 === questionId={}, title={}, description={}, status={}",
+                    question.getQuestionId(), question.getTitle(),
+                    question.getDescription() != null ? question.getDescription().substring(0, Math.min(50, question.getDescription().length())) + "..." : null,
+                    question.getStatus());
             questionMapper.insert(question);
             log.info("题目持久化成功，contentHash={}, questionId={}", contentHash, question.getQuestionId());
             return question.getQuestionId();
@@ -97,22 +113,49 @@ public class ProblemPersistServiceImpl implements ProblemPersistService {
         String ts = String.valueOf(System.currentTimeMillis()).substring(3);
         int rand = (int) (Math.random() * 10000);
         question.setQuestionCode(String.format("P%s%04d", ts, rand));
-        question.setTitle(sanitizeText(response.getTitle()));
-        question.setDescription(sanitizeText(response.getDescription()));
-        question.setInputDesc(sanitizeText(response.getInputDesc()));
-        question.setOutputDesc(sanitizeText(response.getOutputDesc()));
-        question.setExamples(sanitizeJsonString(response.getExamples()));
-        question.setTimeLimit(response.getTimeLimit() != null ? response.getTimeLimit() : 1000);
-        question.setMemoryLimit(response.getMemoryLimit() != null ? response.getMemoryLimit() : 256);
+
+        if (response != null) {
+            question.setTitle(sanitizeText(response.getTitle()));
+            question.setDescription(sanitizeText(response.getDescription()));
+            question.setInputDesc(sanitizeText(response.getInputDesc()));
+            question.setOutputDesc(sanitizeText(response.getOutputDesc()));
+            question.setExamples(sanitizeJsonString(response.getExamples()));
+            question.setTimeLimit(response.getTimeLimit() != null ? response.getTimeLimit() : 1000);
+            question.setMemoryLimit(response.getMemoryLimit() != null ? response.getMemoryLimit() : 256);
+            question.setDifficulty(response.getDifficulty() != null ? response.getDifficulty() : 1);
+            // 数据完整则正常，否则标记待修复
+            if (isProblemDataComplete(response)) {
+                question.setStatus(1);  // 正常
+            } else {
+                question.setStatus(0);  // 待修复（数据不完整）
+                log.warn("题目数据不完整，标记为待修复状态，contentHash={}", contentHash);
+            }
+        } else {
+            // response 为 null，说明解析失败，标记为待修复
+            question.setTitle("[数据解析失败]");
+            question.setStatus(0);  // 待修复
+            log.error("题目数据为空，标记为待修复状态，contentHash={}", contentHash);
+        }
+
         question.setQuestionType(0);
-        question.setDifficulty(response.getDifficulty() != null ? response.getDifficulty() : 1);
-        question.setStatus(1);
         question.setVersion(1);
         question.setContentHash(contentHash);
         question.setCreateTime(LocalDateTime.now());
         question.setUpdateTime(LocalDateTime.now());
         question.setPublishedTime(LocalDateTime.now());
         return question;
+    }
+
+    /**
+     * 检查题目数据是否完整
+     */
+    private boolean isProblemDataComplete(ProblemGenerationResponse response) {
+        if (response == null) {
+            return false;
+        }
+        return hasText(response.getDescription())
+                && hasText(response.getInputDesc())
+                && hasText(response.getOutputDesc());
     }
 
     /**

@@ -67,9 +67,14 @@ public class ProblemServiceImpl implements ProblemService {
             return Collections.emptyList();
         }
 
-        int targetCount = (request.getNumber() != null && request.getNumber() > 0) 
-                ? request.getNumber() 
+        int targetCount = (request.getNumber() != null && request.getNumber() > 0)
+                ? request.getNumber()
                 : 1;
+        // 防御性校验：确保不超过4个
+        if (targetCount > 4) {
+            log.warn("检测到异常的题目数量请求 {}，已限制为4", targetCount);
+            targetCount = 4;
+        }
 
         String userKey = resolveUserKey(request);
         return generateUniqueProblems(request, targetCount, userKey);
@@ -236,6 +241,14 @@ public class ProblemServiceImpl implements ProblemService {
             }
 
             ProblemGenerationResponse response = JSON.parseObject(cleanJson, ProblemGenerationResponse.class);
+
+            // 打印解析结果，检查各字段
+            log.info("=== AI 生成题目解析结果 === title={}, description长度={}, inputDesc长度={}, outputDesc长度={}, examples长度={}",
+                    response.getTitle(),
+                    response.getDescription() != null ? response.getDescription().length() : 0,
+                    response.getInputDesc() != null ? response.getInputDesc().length() : 0,
+                    response.getOutputDesc() != null ? response.getOutputDesc().length() : 0,
+                    response.getExamples() != null ? response.getExamples().length() : 0);
 
             // 设置默认值
             if (response.getStackLimit() == null) {

@@ -12,6 +12,8 @@ import xiaozhu.common.annotation.RateLimit;
 import xiaozhu.common.annotation.RequireLogin;
 import xiaozhu.common.comm.ResponseResult;
 
+import jakarta.validation.Valid;
+
 /**
  * 题目生成接口
  */
@@ -31,7 +33,7 @@ public class ProblemController {
     @PostMapping("/generate")
     @RequireLogin(message = "请先登录后再生成题目")
     @RateLimit(windowSize = 60, maxRequests = 10, message = "题目生成请求过于频繁，请稍后再试")
-    public ResponseResult<String> generateProblem(@RequestBody ProblemGenerationRequest request) {
+    public ResponseResult<String> generateProblem(@RequestBody @Valid ProblemGenerationRequest request) {
         if (request == null) {
             return ResponseResult.fail("请求参数不能为空");
         }

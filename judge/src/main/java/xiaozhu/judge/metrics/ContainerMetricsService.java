@@ -13,6 +13,7 @@ import xiaozhu.judge.pool.metrics.ContainerPoolMetrics;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -25,6 +26,9 @@ public class ContainerMetricsService {
 
     private final MultiLanguageDockerSandBoxPool containerPool;
     private final MeterRegistry meterRegistry;
+    
+    // 标记是否已经初始化完成
+    private final AtomicBoolean initialized = new AtomicBoolean(false);
 
     public ContainerMetricsService(MultiLanguageDockerSandBoxPool containerPool, MeterRegistry meterRegistry) {
         this.containerPool = containerPool;
@@ -56,6 +60,13 @@ public class ContainerMetricsService {
             Map<String, LanguageContainerPool.PoolStatus> poolStatusMap = containerPool.getAllPoolStatus();
             Map<String, ContainerPoolMetrics> metricsMap = containerPool.getAllMetrics();
 
+            if (poolStatusMap.isEmpty()) {
+                log.warn("容器池状态为空，无法更新指标");
+                return;
+            }
+
+            log.debug("开始更新容器池指标，语言数量: {}", poolStatusMap.size());
+
             // 更新每个语言池的指标
             for (Map.Entry<String, LanguageContainerPool.PoolStatus> entry : poolStatusMap.entrySet()) {
                 String language = entry.getKey();
@@ -73,16 +84,40 @@ public class ContainerMetricsService {
                     metricsRef.set(metrics);
 
                     // 注册或更新 Gauge 指标（绑定到 AtomicReference，每次读取时获取最新值）
-                    registerOrUpdateGauge("judge.container.pool.size", language, statusRef, 
+                    registerOrUpdateGauge("judge_container_pool_size", language, statusRef, 
                             ref -> (double) ref.get().currentSize(), poolSizeGauges, "判题容器池当前大小");
-                    registerOrUpdateGauge("judge.container.pool.available", language, statusRef,
+                    registerOrUpdateGauge("judge_container_pool_available", language, statusRef,
                             ref -> (double) ref.get().availableSize(), poolAvailableGauges, "判题容器池可用容器数");
-                    registerOrUpdateGauge("judge.container.pool.in_use", language, statusRef,
+                    registerOrUpdateGauge("judge_container_pool_in_use", language, statusRef,
                             ref -> (double) (ref.get().currentSize() - ref.get().availableSize()), poolInUseGauges, "判题容器池使用中容器数");
 
                     // 更新累计指标
-                    updateCounterMetrics(language, metricsRef);
+                    registerOrUpdateGauge("judge_container_metrics_created", language, metricsRef,
+                            ref -> (double) ref.get().getCreated(), metricsCreatedGauges, "判题容器创建总数");
+                    registerOrUpdateGauge("judge_container_metrics_destroyed", language, metricsRef,
+                            ref -> (double) ref.get().getDestroyed(), metricsDestroyedGauges, "判题容器销毁总数");
+                    registerOrUpdateGauge("judge_container_metrics_faults", language, metricsRef,
+                            ref -> (double) ref.get().getFaults(), metricsFaultsGauges, "判题容器故障总数");
+                    registerOrUpdateGauge("judge_container_metrics_timeouts", language, metricsRef,
+                            ref -> (double) ref.get().getTimeouts(), metricsTimeoutsGauges, "判题容器获取超时总数");
+                    registerOrUpdateGauge("judge_container_metrics_returned", language, metricsRef,
+                            ref -> (double) ref.get().getReturned(), metricsReturnedGauges, "判题容器归还总数");
+                    registerOrUpdateGauge("judge_container_metrics_acquire_latency_avg", language, metricsRef,
+                            ref -> ref.get().getAverageAcquireLatencyMs(), metricsLatencyGauges, "判题容器获取平均耗时（毫秒）");
+
+                    log.debug("已注册指标: {} - poolSize={}, available={}, created={}", 
+                            language, status.currentSize(), status.availableSize(), metrics.getCreated());
+                } else {
+                    log.warn("语言 {} 的指标为空: status={}, metrics={}", language, status, metrics);
                 }
+            }
+            
+            // 首次成功更新后记录日志
+            if (!initialized.get() && !poolStatusMap.isEmpty()) {
+                log.info("容器池指标初始化成功，支持的语言: {}", poolStatusMap.keySet());
+                log.info("已注册的 Gauge 数量: poolSize={}, available={}, inUse={}", 
+                        poolSizeGauges.size(), poolAvailableGauges.size(), poolInUseGauges.size());
+                initialized.set(true);
             }
         } catch (Exception e) {
             log.error("更新容器指标失败", e);
@@ -92,30 +127,12 @@ public class ContainerMetricsService {
     private <T> void registerOrUpdateGauge(String name, String language, T state, 
                                            java.util.function.ToDoubleFunction<T> valueFunction,
                                            Map<String, Gauge> gaugeCache, String description) {
-        // 如果 Gauge 不存在，注册新的
         gaugeCache.computeIfAbsent(language, key -> 
             Gauge.builder(name, state, valueFunction)
                     .description(description)
                     .tag("language", language)
                     .register(meterRegistry)
         );
-        // 如果已存在，Gauge 会自动读取 state 的最新值（因为 state 是 AtomicReference）
-    }
-
-    private void updateCounterMetrics(String language, AtomicReference<ContainerPoolMetrics> metricsRef) {
-        // 使用 Gauge 来暴露累计指标值（绑定到 AtomicReference）
-        registerOrUpdateGauge("judge.container.metrics.created", language, metricsRef,
-                ref -> (double) ref.get().getCreated(), metricsCreatedGauges, "判题容器创建总数");
-        registerOrUpdateGauge("judge.container.metrics.destroyed", language, metricsRef,
-                ref -> (double) ref.get().getDestroyed(), metricsDestroyedGauges, "判题容器销毁总数");
-        registerOrUpdateGauge("judge.container.metrics.faults", language, metricsRef,
-                ref -> (double) ref.get().getFaults(), metricsFaultsGauges, "判题容器故障总数");
-        registerOrUpdateGauge("judge.container.metrics.timeouts", language, metricsRef,
-                ref -> (double) ref.get().getTimeouts(), metricsTimeoutsGauges, "判题容器获取超时总数");
-        registerOrUpdateGauge("judge.container.metrics.returned", language, metricsRef,
-                ref -> (double) ref.get().getReturned(), metricsReturnedGauges, "判题容器归还总数");
-        registerOrUpdateGauge("judge.container.metrics.acquire_latency_avg", language, metricsRef,
-                ref -> ref.get().getAverageAcquireLatencyMs(), metricsLatencyGauges, "判题容器获取平均耗时（毫秒）");
     }
 
     /**

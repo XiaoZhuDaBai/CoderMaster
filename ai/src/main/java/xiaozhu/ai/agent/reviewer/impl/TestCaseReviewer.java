@@ -91,6 +91,29 @@ public class TestCaseReviewer implements Reviewer<TestCaseGenerationResponse> {
             return;
         }
         details.put("response_null", false);
+
+        // 检查可疑用例
+        List<TestCaseDetail> testCases = response.getTestCases();
+        if (testCases != null && !testCases.isEmpty()) {
+            List<Integer> suspiciousIndices = new ArrayList<>();
+            List<String> suspiciousReasons = new ArrayList<>();
+
+            for (int i = 0; i < testCases.size(); i++) {
+                TestCaseDetail tc = testCases.get(i);
+                if (tc.getSuspicious() != null && tc.getSuspicious()) {
+                    suspiciousIndices.add(i);
+                    suspiciousReasons.add(tc.getSuspiciousReason());
+                }
+            }
+
+            if (!suspiciousIndices.isEmpty()) {
+                details.put("suspicious_case_count", suspiciousIndices.size());
+                details.put("suspicious_indices", suspiciousIndices);
+                details.put("suspicious_reasons", suspiciousReasons);
+                issues.add(String.format("存在 %d 个可疑用例（双AI验证不一致），建议人工审核或重新生成",
+                        suspiciousIndices.size()));
+            }
+        }
     }
 
     private void validateCount(List<TestCaseDetail> testCases, List<String> issues,

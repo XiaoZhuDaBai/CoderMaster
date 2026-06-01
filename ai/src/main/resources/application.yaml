@@ -114,7 +114,7 @@ langchain4j:
       log-requests: false
       log-responses: false
       max-retries: 2
-      request-timeout-seconds: 120
+      request-timeout-seconds: 300
 
 management:
   endpoints:

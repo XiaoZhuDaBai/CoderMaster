@@ -1,0 +1,191 @@
+version: '3.8'
+
+# =====================================================
+# 基础设施服务 - 部署在服务器 A
+# 包含：Nacos、MySQL、Redis、RabbitMQ、Prometheus、Grafana
+# 以及前端服务：front、chat-view
+# =====================================================
+
+services:
+  # Nacos 配置中心 & 服务注册
+  nacos:
+    image: nacos/nacos-server:v2.2.3
+    container_name: oj-nacos
+    environment:
+      - MODE=standalone
+      - PREFER_HOST_MODE=hostname
+      - TZ=Asia/Shanghai
+    ports:
+      - "8848:8848"
+      - "9848:9848"
+    volumes:
+      - nacos-data:/home/nacos/data
+      - nacos-logs:/home/nacos/logs
+    restart: unless-stopped
+    networks:
+      - oj-infra-network
+
+  # MySQL 数据库
+  mysql:
+    image: mysql:8.0
+    container_name: oj-mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_PASSWORD}
+      - TZ=Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./database:/docker-entrypoint-initdb.d
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    restart: unless-stopped
+    networks:
+      - oj-infra-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis 缓存
+  redis:
+    image: redis:7-alpine
+    container_name: oj-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    networks:
+      - oj-infra-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # RabbitMQ 消息队列
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: oj-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USERNAME}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
+      - TZ=Asia/Shanghai
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    restart: unless-stopped
+    networks:
+      - oj-infra-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Prometheus 监控
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: oj-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+    networks:
+      - oj-infra-network
+      - oj-app-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # Grafana 可视化
+  grafana:
+    image: grafana/grafana:latest
+    container_name: oj-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    restart: unless-stopped
+    networks:
+      - oj-infra-network
+    depends_on:
+      - prometheus
+
+  # =====================================================
+  # 前端服务 - 部署在服务器 A
+  # =====================================================
+
+  # 主前端 (OJ 题目系统)
+  front:
+    build:
+      context: ./front
+      dockerfile: Dockerfile
+    container_name: oj-front
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - TZ=Asia/Shanghai
+    environment_file:
+      - .env
+    restart: unless-stopped
+    networks:
+      - oj-infra-network
+    depends_on:
+      - mysql
+      - redis
+
+  # AI 聊天界面
+  chat-view:
+    build:
+      context: ./chat-view
+      dockerfile: Dockerfile
+    container_name: oj-chat-view
+    ports:
+      - "8088:80"
+    environment:
+      - TZ=Asia/Shanghai
+    environment_file:
+      - .env
+    restart: unless-stopped
+    networks:
+      - oj-infra-network
+    depends_on:
+      - mysql
+      - redis
+
+volumes:
+  nacos-data:
+  nacos-logs:
+  redis-data:
+  prometheus-data:
+  grafana-data:
+  mysql-data:
+  rabbitmq-data:
+
+networks:
+  oj-infra-network:
+    name: oj-infra-network
+    driver: bridge

@@ -1,5 +1,7 @@
 package xiaozhu.ai.model;
 
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import java.util.List;
@@ -48,8 +50,10 @@ public class ProblemGenerationRequest {
     private Integer questionType = 0;
 
     /**
-     * 生成题目数量
+     * 生成题目数量（1-4）
      */
+    @Min(value = 1, message = "生成数量最小为1")
+    @Max(value = 4, message = "生成数量最大为4")
     private Integer number;
     
     /**

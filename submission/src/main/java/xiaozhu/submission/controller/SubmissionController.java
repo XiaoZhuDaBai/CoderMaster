@@ -8,11 +8,15 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
 import xiaozhu.common.annotation.RequireLogin;
 import xiaozhu.common.comm.ResponseResult;
+import xiaozhu.common.eenum.JudgeStatus;
 import xiaozhu.submission.model.dto.RunCaseRequest;
 import xiaozhu.submission.model.dto.RunCaseResultResponse;
 import xiaozhu.submission.model.dto.SubmissionCreateRequest;
+import xiaozhu.submission.model.dto.SubmissionPageRequest;
+import xiaozhu.submission.model.dto.SubmissionPageResponse;
 import xiaozhu.submission.model.dto.SubmissionResponse;
 import xiaozhu.submission.service.SubmissionService;
 
@@ -60,5 +64,27 @@ public class SubmissionController {
     public ResponseResult<RunCaseResultResponse> getRunCaseResult(@PathVariable String requestId) {
         RunCaseResultResponse response = submissionService.getRunCaseResult(requestId);
         return ResponseResult.success(response);
+    }
+
+    /**
+     * 分页查询用户的提交记录
+     */
+    @RequireLogin
+    @GetMapping("/page")
+    public ResponseResult<SubmissionPageResponse> getSubmissionPage(
+            @RequestParam Long userId,
+            @RequestParam(required = false, defaultValue = "1") Integer pageNum,
+            @RequestParam(required = false, defaultValue = "6") Integer pageSize,
+            @RequestParam(required = false) String questionTitle,
+            @RequestParam(required = false) String language,
+            @RequestParam(required = false) JudgeStatus judgeStatus) {
+        SubmissionPageRequest request = new SubmissionPageRequest();
+        request.setUserId(userId);
+        request.setPageNum(pageNum);
+        request.setPageSize(pageSize);
+        request.setQuestionTitle(questionTitle);
+        request.setLanguage(language);
+        request.setJudgeStatus(judgeStatus);
+        return ResponseResult.success(submissionService.getSubmissionPage(request));
     }
 }

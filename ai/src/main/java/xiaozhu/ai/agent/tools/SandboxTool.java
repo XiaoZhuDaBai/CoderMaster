@@ -15,7 +15,10 @@ import xiaozhu.common.dto.SandboxExecuteRequest;
 import xiaozhu.common.dto.SandboxExecuteResponse;
 import xiaozhu.common.feign.JudgeSandboxFeignClient;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Agent 沙箱执行工具
@@ -120,7 +123,210 @@ public class SandboxTool {
     }
 
     /**
-     * 执行测试用例生成器并自动获取 expectedOutput
+     * 执行测试用例生成器并自动获取 expectedOutput（带双 AI 交叉验证）
+     * 流程：
+     * 1. 执行 generatorCode 获取 rawInput
+     * 2. 用 solutionCodes 中的每个 solutionCode 验证 expectedOutput
+     * 3. 如果多个 solutionCode 结果不一致，标记为可疑
+     * 4. 返回测试用例列表及验证结果 [{input, expectedOutput, isSuspicious, suspiciousReason}]
+     *
+     * @param generatorCode 测试用例生成器代码
+     * @param solutionCodes 参考解题代码列表（用于计算和验证 expectedOutput）
+     * @param language 编程语言，默认 java
+     * @param maxTestCases 最大生成用例数，默认 5
+     * @param maxRetries 每个可疑用例最大重试次数，默认 3
+     */
+    @Tool(name = "runGeneratorCodeWithVerification")
+    public String runGeneratorCodeWithVerification(
+            @P("generatorCode") String generatorCode,
+            @P("solutionCodes") List<String> solutionCodes,
+            @P("language") String language,
+            @P("maxTestCases") Integer maxTestCases,
+            @P("maxRetries") Integer maxRetries) {
+
+        // 检查 Token 预算，防止超限
+        checkTokenBudget();
+
+        // 验证参数
+        if (solutionCodes == null || solutionCodes.isEmpty()) {
+            return toErrorResult("solutionCodes 不能为空");
+        }
+
+        // 验证 generatorCode 类名
+        if (generatorCode != null && generatorCode.contains("public class")) {
+            if (!generatorCode.contains("public class Main")) {
+                log.warn("[SandboxTool] generatorCode 包含非 Main 的 public class，可能导致编译错误");
+                return JSON.toJSONString(new RunGeneratorResult(false, 0,
+                        "generatorCode 错误：必须使用 public class Main，禁止其他 public class"));
+            }
+        }
+
+        String actualLang = StrUtil.isBlank(language) ? DEFAULT_LANGUAGE : language.trim().toLowerCase();
+        int actualMax = maxTestCases != null && maxTestCases > 0 ? maxTestCases : 5;
+        int actualRetries = maxRetries != null && maxRetries > 0 ? maxRetries : 3;
+        log.info("[SandboxTool] runGeneratorCodeWithVerification，语言={}, maxTestCases={}, solutionCodes数量={}, maxRetries={}",
+                actualLang, actualMax, solutionCodes.size(), actualRetries);
+
+        try {
+            List<TestCaseItemWithVerification> testCases = new ArrayList<>();
+            List<SolutionVerifyResult> allSolutionResults = new ArrayList<>();
+            Set<Integer> suspiciousIndices = new HashSet<>();
+
+            // 使用第一个 solutionCode 作为基准生成器
+            String primarySolutionCode = solutionCodes.getFirst();
+
+            // 循环生成多个测试用例
+            for (int i = 0; i < actualMax; i++) {
+                String rawInput = null;
+                String expectedOutput = null;
+                boolean isSuspicious = false;
+                String suspiciousReason = null;
+
+                // 尝试生成或重新生成可疑用例
+                for (int retry = 0; retry < actualRetries; retry++) {
+                    // Step 1: 执行 generatorCode 获取 rawInput
+                    String genResult = executeCode(generatorCode, null, actualLang);
+
+                    if (genResult == null || genResult.contains("\"success\":false")) {
+                        log.warn("[SandboxTool] runGeneratorCode caseIndex={} retry={}: generatorCode 执行失败，跳过",
+                                i, retry);
+                        break;
+                    }
+
+                    rawInput = extractOutput(genResult);
+                    if (rawInput == null || rawInput.isBlank()) {
+                        log.warn("[SandboxTool] runGeneratorCode caseIndex={} retry={}: generatorCode 输出为空，重试",
+                                i, retry);
+                        continue;
+                    }
+
+                    // Step 2: 用 primarySolutionCode 获取 expectedOutput
+                    String solResult = executeCode(primarySolutionCode, rawInput, actualLang);
+
+                    if (solResult == null || solResult.contains("\"success\":false")) {
+                        log.warn("[SandboxTool] runGeneratorCode caseIndex={} retry={}: solutionCode 执行失败，重试",
+                                i, retry);
+                        continue;
+                    }
+
+                    expectedOutput = extractOutput(solResult);
+                    if (expectedOutput == null || expectedOutput.isBlank()) {
+                        log.warn("[SandboxTool] runGeneratorCode caseIndex={} retry={}: solutionCode 输出为空，重试",
+                                i, retry);
+                        continue;
+                    }
+
+                    // Step 3: 用其他 solutionCode 验证
+                    List<String> outputs = new ArrayList<>();
+                    outputs.add(expectedOutput.trim());
+                    boolean hasDiscrepancy = false;
+                    StringBuilder discrepancyMsg = new StringBuilder();
+
+                    for (int solIdx = 1; solIdx < solutionCodes.size(); solIdx++) {
+                        String otherSolCode = solutionCodes.get(solIdx);
+                        String otherResult = executeCode(otherSolCode, rawInput, actualLang);
+
+                        if (otherResult != null && !otherResult.contains("\"success\":false")) {
+                            String otherOutput = extractOutput(otherResult);
+                            if (otherOutput != null) {
+                                outputs.add(otherOutput.trim());
+                                if (!otherOutput.trim().equals(expectedOutput.trim())) {
+                                    hasDiscrepancy = true;
+                                    discrepancyMsg.append(String.format("solutionCode#%d输出=%s",
+                                            solIdx + 1, truncate(otherOutput)));
+                                }
+                            }
+                        }
+                    }
+
+                    if (hasDiscrepancy) {
+                        log.warn("[SandboxTool] 用例#{} 【可疑】AI#1输出={}, {}", i,
+                                truncate(expectedOutput), discrepancyMsg);
+                        isSuspicious = true;
+                        suspiciousReason = String.format("AI#1输出=%s, %s",
+                                truncate(expectedOutput), discrepancyMsg);
+                        // 可疑用例重新生成
+                        continue;
+                    } else {
+                        // 验证通过
+                        isSuspicious = false;
+                        suspiciousReason = null;
+                        break;
+                    }
+                }
+
+                if (expectedOutput == null) {
+                    log.warn("[SandboxTool] 用例#{} 生成失败（达到最大重试次数 {}）", i, actualRetries);
+                    continue;
+                }
+
+                TestCaseItemWithVerification tc = new TestCaseItemWithVerification(
+                        i, rawInput.trim(), expectedOutput.trim(), isSuspicious, suspiciousReason);
+                testCases.add(tc);
+
+                if (isSuspicious) {
+                    suspiciousIndices.add(i);
+                }
+
+                log.info("[SandboxTool] runGeneratorCode caseIndex={} 成功，isSuspicious={}，input长度={}, output长度={}",
+                        i, isSuspicious, rawInput.length(), expectedOutput.length());
+            }
+
+            if (testCases.isEmpty()) {
+                return JSON.toJSONString(new RunGeneratorResult(false, 0, "所有用例生成均失败"));
+            }
+
+            // 为每个 solutionCode 计算通过率
+            for (int solIdx = 0; solIdx < solutionCodes.size(); solIdx++) {
+                int passCount = 0;
+                for (TestCaseItemWithVerification tc : testCases) {
+                    String solResult = executeCode(solutionCodes.get(solIdx), tc.input(), actualLang);
+                    if (solResult != null && !solResult.contains("\"success\":false")) {
+                        String output = extractOutput(solResult);
+                        if (output != null && output.trim().equals(tc.expectedOutput().trim())) {
+                            passCount++;
+                        }
+                    }
+                }
+                allSolutionResults.add(new SolutionVerifyResult(
+                        solIdx,
+                        hashCode(solutionCodes.get(solIdx)),
+                        passCount,
+                        testCases.size(),
+                        passCount == testCases.size()
+                ));
+            }
+
+            log.info("[SandboxTool] runGeneratorCodeWithVerification 完成，成功生成 {} 个测试用例，可疑 {} 个",
+                    testCases.size(), suspiciousIndices.size());
+
+            return JSON.toJSONString(new MultiSolutionResult(
+                    true,
+                    testCases.size(),
+                    testCases,
+                    allSolutionResults,
+                    new ArrayList<>(suspiciousIndices)
+            ));
+
+        } catch (Exception e) {
+            log.error("[SandboxTool] runGeneratorCodeWithVerification 异常: {}", e.getMessage(), e);
+            return toErrorResult("生成测试用例异常: " + e.getMessage());
+        }
+    }
+
+    private String hashCode(String str) {
+        if (str == null) return "null";
+        return Integer.toHexString(str.hashCode());
+    }
+
+    private String truncate(String str) {
+        if (str == null) return "null";
+        if (str.length() <= 50) return str;
+        return str.substring(0, 50) + "...";
+    }
+
+    /**
+     * 执行测试用例生成器并自动获取 expectedOutput（兼容旧接口）
      * 流程：
      * 1. 执行 generatorCode 获取 rawInput
      * 2. 执行 solutionCode 获取 expectedOutput
@@ -140,22 +346,22 @@ public class SandboxTool {
 
         // 检查 Token 预算，防止超限
         checkTokenBudget();
-        
+
         // 验证 generatorCode 类名
         if (generatorCode != null && generatorCode.contains("public class")) {
             if (!generatorCode.contains("public class Main")) {
                 log.warn("[SandboxTool] generatorCode 包含非 Main 的 public class，可能导致编译错误");
-                return JSON.toJSONString(new RunGeneratorResult(false, 0, 
+                return JSON.toJSONString(new RunGeneratorResult(false, 0,
                         "generatorCode 错误：必须使用 public class Main，禁止其他 public class"));
             }
         }
-        
+
         String actualLang = StrUtil.isBlank(language) ? DEFAULT_LANGUAGE : language.trim().toLowerCase();
         int actualMax = maxTestCases != null && maxTestCases > 0 ? maxTestCases : 5;
         log.info("[SandboxTool] runGeneratorCode，语言={}, maxTestCases={}", actualLang, actualMax);
 
         try {
-            List<TestCaseItem> testCases = new java.util.ArrayList<>();
+            List<TestCaseItem> testCases = new ArrayList<>();
 
             // 循环生成多个测试用例
             for (int i = 0; i < actualMax; i++) {
@@ -379,4 +585,12 @@ public class SandboxTool {
     private record SampleCase(String input, String expectedOutput) {}
     private record RunGeneratorResult(boolean success, int count, Object data) {}
     private record TestCaseItem(int caseIndex, String input, String expectedOutput) {}
+    private record TestCaseItemWithVerification(int caseIndex, String input, String expectedOutput,
+                                                 boolean isSuspicious, String suspiciousReason) {}
+    private record SolutionVerifyResult(int solutionIndex, String solutionCodeHash,
+                                        int passCount, int totalCount, boolean allPassed) {}
+    private record MultiSolutionResult(boolean success, int testCaseCount,
+                                        List<TestCaseItemWithVerification> testCases,
+                                        List<SolutionVerifyResult> solutionResults,
+                                        List<Integer> suspiciousCaseIndices) {}
 }

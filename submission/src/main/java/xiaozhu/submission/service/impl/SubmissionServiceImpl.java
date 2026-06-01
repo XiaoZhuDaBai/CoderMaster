@@ -1,7 +1,9 @@
 package xiaozhu.submission.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -15,12 +17,15 @@ import org.springframework.util.StringUtils;
 import xiaozhu.common.constant.RabbitMQConstants;
 import xiaozhu.common.eenum.JudgeStatus;
 import xiaozhu.common.eenum.JudgeTaskType;
+import xiaozhu.common.feign.ProblemFeignClient;
 import xiaozhu.common.message.JudgeResultMessage;
 import xiaozhu.common.message.JudgeTaskMessage;
 import xiaozhu.submission.mapper.SubmissionMapper;
 import xiaozhu.submission.model.dto.RunCaseRequest;
 import xiaozhu.submission.model.dto.RunCaseResultResponse;
 import xiaozhu.submission.model.dto.SubmissionCreateRequest;
+import xiaozhu.submission.model.dto.SubmissionPageRequest;
+import xiaozhu.submission.model.dto.SubmissionPageResponse;
 import xiaozhu.submission.model.dto.SubmissionResponse;
 import xiaozhu.submission.model.entity.Submission;
 import xiaozhu.submission.service.SubmissionService;
@@ -30,6 +35,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -49,6 +55,8 @@ public class SubmissionServiceImpl implements SubmissionService {
     private final RedisTemplate<String, Object> redisTemplate;
 
     private final ObjectMapper objectMapper;
+
+    private final ProblemFeignClient problemFeignClient;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -188,6 +196,85 @@ public class SubmissionServiceImpl implements SubmissionService {
             return (RunCaseResultResponse) cache;
         }
         return null;
+    }
+
+    @Override
+    public SubmissionPageResponse getSubmissionPage(SubmissionPageRequest request) {
+        log.info("=== getSubmissionPage 被调用 === userId={}, pageNum={}, pageSize={}", 
+                request.getUserId(), request.getPageNum(), request.getPageSize());
+        
+        // 设置默认分页参数
+        int pageNum = request.getPageNum() != null && request.getPageNum() > 0 ? request.getPageNum() : 1;
+        int pageSize = request.getPageSize() != null && request.getPageSize() > 0 ? request.getPageSize() : 6;
+
+        // 构建查询条件（支持最左前缀原则）
+        LambdaQueryWrapper<Submission> queryWrapper = Wrappers.lambdaQuery();
+        queryWrapper.eq(Submission::getUserId, request.getUserId());
+
+        // 按题目标题模糊搜索
+        if (StringUtils.hasText(request.getQuestionTitle())) {
+            List<Long> matchedSubmissionIds = submissionMapper.selectSubmissionIdsByTitle(
+                    request.getUserId(), request.getQuestionTitle());
+            if (matchedSubmissionIds.isEmpty()) {
+                // 没有匹配的记录，返回空结果
+                return new SubmissionPageResponse(new ArrayList<>(), 0, pageNum, pageSize, 0);
+            }
+            queryWrapper.in(Submission::getSubmissionId, matchedSubmissionIds);
+        }
+
+        // 按语言筛选
+        if (StringUtils.hasText(request.getLanguage())) {
+            queryWrapper.eq(Submission::getLanguage, request.getLanguage());
+        }
+
+        // 按判题状态筛选
+        if (request.getJudgeStatus() != null) {
+            queryWrapper.eq(Submission::getJudgeStatus, request.getJudgeStatus());
+        }
+
+        // 按创建时间倒序
+        queryWrapper.orderByDesc(Submission::getCreateTime);
+
+        // 执行分页查询
+        Page<Submission> page = new Page<>(pageNum, pageSize);
+        Page<Submission> resultPage = submissionMapper.selectPage(page, queryWrapper);
+        
+        log.info("=== 分页查询结果 === total={}, records size={}", resultPage.getTotal(), resultPage.getRecords().size());
+
+        // 转换结果，填充题目详情
+        List<SubmissionResponse> records = new ArrayList<>();
+        for (Submission submission : resultPage.getRecords()) {
+            SubmissionResponse response = buildSubmissionResponse(submission);
+            // 通过 Feign 获取完整题目信息
+            try {
+                var detailResult = problemFeignClient.getQuestionDetail(submission.getQuestionId());
+                if (detailResult != null && Boolean.TRUE.equals(detailResult.getStatus()) && detailResult.getData() != null) {
+                    var detail = detailResult.getData();
+                    response.setTitle(detail.title());
+                    response.setDifficulty(detail.difficulty());
+                    response.setDescription(detail.description());
+                    response.setInputDesc(detail.inputDesc());
+                    response.setOutputDesc(detail.outputDesc());
+                    response.setExamples(detail.examples());
+                    response.setTimeLimit(detail.timeLimit());
+                    response.setMemoryLimit(detail.memoryLimit());
+                }
+            } catch (Exception e) {
+                log.warn("获取题目详情失败，questionId={}, error={}", submission.getQuestionId(), e.getMessage());
+            }
+            records.add(response);
+        }
+
+        // 计算总页数
+        int totalPages = (int) Math.ceil((double) resultPage.getTotal() / pageSize);
+
+        return new SubmissionPageResponse(
+                records,
+                resultPage.getTotal(),
+                pageNum,
+                pageSize,
+                totalPages
+        );
     }
 
     // ==================== Redis 缓存辅助方法 ====================
@@ -369,20 +456,30 @@ public class SubmissionServiceImpl implements SubmissionService {
     // ==================== 其他辅助方法 ====================
 
     private Long resolveQuestionId(String questionIdentifier, String contentHash, String questionSnapshot) {
-        String candidate = firstNonBlank(
-                questionIdentifier,
+        // 优先使用 contentHash 获取真正的自增 questionId
+        String effectiveContentHash = firstNonBlank(
                 contentHash,
-                extractFromSnapshot(questionSnapshot, "questionId"),
                 extractFromSnapshot(questionSnapshot, "contentHash")
         );
-        if (!StringUtils.hasText(candidate)) {
+        
+        if (!StringUtils.hasText(effectiveContentHash)) {
+            log.error("无法获取 contentHash，无法解析 questionId");
             return null;
         }
+        
         try {
-            return Long.valueOf(candidate);
-        } catch (NumberFormatException ex) {
-            return hashStringToLong(candidate);
+            var result = problemFeignClient.getQuestionIdByContentHash(effectiveContentHash);
+            if (result != null && Boolean.TRUE.equals(result.getStatus()) && result.getData() != null) {
+                log.info("通过 contentHash 获取到 questionId: {}, contentHash: {}", result.getData(), effectiveContentHash);
+                return result.getData();
+            }
+        } catch (Exception e) {
+            log.warn("通过 contentHash 获取 questionId 失败: {}, error: {}", effectiveContentHash, e.getMessage());
         }
+        
+        // contentHash 存在但获取失败，返回 null
+        log.error("contentHash 获取 questionId 失败: {}", effectiveContentHash);
+        return null;
     }
 
     private String extractFromSnapshot(String snapshot, String fieldName) {
@@ -450,6 +547,9 @@ public class SubmissionServiceImpl implements SubmissionService {
                 submission.getSubmissionId(),
                 submission.getUserId(),
                 submission.getQuestionId(),
+                submission.getCode(),  // 提交的代码
+                null, // title 稍后填充
+                null, // difficulty 稍后填充
                 submission.getLanguage(),
                 submission.getJudgeStatus(),
                 submission.getJudgeResult(),
@@ -460,7 +560,13 @@ public class SubmissionServiceImpl implements SubmissionService {
                 submission.getErrorMessage(),
                 null,
                 submission.getCreateTime(),
-                submission.getJudgeTime()
+                submission.getJudgeTime(),
+                null, // description 稍后填充
+                null, // inputDesc 稍后填充
+                null, // outputDesc 稍后填充
+                null, // examples 稍后填充
+                null, // timeLimit 稍后填充
+                null  // memoryLimit 稍后填充
         );
     }
 

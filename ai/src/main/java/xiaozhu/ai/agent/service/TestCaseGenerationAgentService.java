@@ -63,7 +63,7 @@ public class TestCaseGenerationAgentService {
     /** 解决方案生成提示词（用于生成参考 solutionCode） */
     private final String solutionCodePromptTemplate;
     /** ChatMemory 保留的最大消息数（防止上下文超出模型限制） */
-    private static final int MAX_CHAT_MEMORY_MESSAGES = 50;
+    private static final int MAX_CHAT_MEMORY_MESSAGES = 20;
 
     public TestCaseGenerationAgentService(
             @Qualifier("chatModelPrototype") ChatModel chatModel,
@@ -159,9 +159,8 @@ public class TestCaseGenerationAgentService {
                         preTokens, agentConfig.getMaxTokenBudgetPerGeneration() * 0.8);
             }
 
-            String response = this.agent.generateTestCases(memoryId, problem, referenceSamplesJson,
+            String response = this.agent.generateTestCases(memoryId, problem,
                     primarySolutionCode != null ? primarySolutionCode : "null",
-                    crossValidatorSolutionCode != null ? crossValidatorSolutionCode : "null",
                     budgetWarning);
 
             long sessionTokens = TokenUsageListener.getSessionTotalTokens();
@@ -898,72 +897,50 @@ public class TestCaseGenerationAgentService {
 
                 题目信息：{{problem}}
 
-                【参考样例】（用于 verifySolutionCode 的 samples 参数，请原样传入）
-                referenceSamplesJson={{referenceSamplesJson}}
-
-                【主解题代码】（来自预验证阶段的 AI#1，已通过沙箱验证，请优先使用）
+                【主解题代码】（已通过预验证，可信）
                 primarySolutionCode={{primarySolutionCode}}
-
-                【交叉验证解题代码】（来自 AI#2 的独立推导，仅作参考）
-                crossValidatorSolutionCode={{crossValidatorSolutionCode}}
 
                 {{budgetWarning}}
 
                 【强制执行步骤】
-                1. 调用 analyzeProblemTypeLocal 进行本地规则分析（基于关键词匹配，非 AI）
-                2. 调用 getSimilarSuccessCases 获取成功案例参考（必须调用，limit 默认 3）
-                3. 调用 getSimilarFailureCases 获取失败教训（必须调用，limit 默认 3）
-                4. 优先使用 primarySolutionCode：
-                   - primarySolutionCode 不是 "null" → 直接进入步骤 5
-                   - primarySolutionCode 是 "null" → 重新生成 solutionCode 并执行 verifySolutionCode
-                5. 调用 verifySolutionCode 验证 solutionCode，samples 参数直接使用 referenceSamplesJson
-                   - 返回 passed=true → 进入步骤 6
-                   - 返回 passed=false → 分析 failedCases 中的具体错误：
-                     * 运行时错误（如 EmptyStackException）→ 修复 solutionCode 中的 bug，重新执行 verifySolutionCode（最多 2 次）
-                     * 逻辑错误（输出不匹配）→ 记录错误原因，使用 referenceSamplesJson 中的期望输出，继续进入步骤 6
-                     * 禁止无限重试 verifySolutionCode，超过 2 次后强制继续
-                6. 调用 executeCode 生成 generatorCode（language="java"）
-                7. 调用 runGeneratorCode 执行 generatorCode，自动获取 testCases
-                8. 调用 reviewTestCases 评审测试用例，参数：
+                1. 调用 analyzeProblemTypeLocal 进行本地规则分析
+                2. 调用 getSimilarCases 获取相似案例（成功+失败），limit=3
+                3. 直接使用 primarySolutionCode（已验证，无需重验）
+                4. 调用 executeCode 生成 generatorCode（language="java"）
+                5. 调用 runGeneratorCodeWithVerification 执行 generatorCode（带双AI验证）：
+                   - solutionCodes: [primarySolutionCode]（已验证的代码）
+                   - language: "java"
+                   - maxTestCases: 5
+                   - maxRetries: 2
+                6. 调用 reviewTestCases 评审测试用例，参数：
                    - testCasesJson: 测试用例 JSON
-                   - problemHash: 使用题目的 contentHash
-                   - problemTitle: 使用题目的 title
-                   - problemType: 从 analyzeProblemTypeLocal 获取
-                   - algorithmKeyword: 从 analyzeProblemTypeLocal 获取
-                   - solutionCode: 使用 primarySolutionCode
+                   - problemHash, problemTitle, problemType, algorithmKeyword
+                   - solutionCode: primarySolutionCode
+                   - suspiciousCaseIndicesJson: 可疑用例索引
 
-                【评审结果处理 - 关键】
-                9. 如果 reviewTestCases 返回 passed=true 且 score >= 60：
-                   → 【必须立即调用 recordSuccessCase】不要尝试改进或添加更多用例！
-                   → 必须将 reviewTestCases 的 testCasesJson 作为参数传入 recordSuccessCase 的 testCasesJson 字段！
-                   → 调用 recordSuccessCase 后任务完成，禁止继续任何操作
-                10. 如果 reviewTestCases 返回 passed=false 或 score < 60：
-                   → 分析 issues 中的具体问题，调整 generatorCode 重新生成（最多重试 2 次，不是3次！）
-                   → 2 次后仍不通过 → 调用 recordFailureCase，并将当前最佳结果 JSON 放入 contextSummary
+                【评审结果处理】
+                7. 如果 reviewTestCases 返回 passed=true 且 score >= 60：
+                   → 【必须立即调用 recordSuccessCase】，传入 testCasesJson
+                   → 调用后任务完成，禁止继续任何操作
+                8. 如果 reviewTestCases 返回 passed=false 或 score < 60：
+                   → 分析 issues，调整 generatorCode 重新生成（最多重试 2 次）
+                   → 仍不通过 → 调用 recordFailureCase
 
-                【Early Exit 约束 - 最高优先级】
-                11. reviewTestCases 成功后【必须立即】调用 recordSuccessCase，然后结束
-                12. 不要在成功后继续尝试改进测试用例、不要生成更多用例、不要再次 review
-                13. 如果连续 2 次 reviewTestCases 失败，立即调用 recordFailureCase 退出
-                14. 【禁止直接输出 JSON】不要在消息正文中直接输出 JSON，必须通过 recordSuccessCase 或 recordFailureCase 工具提交
-                15. 无论成功失败，最终都必须调用 recordSuccessCase 或 recordFailureCase
+                【Early Exit 约束】
+                9. 成功后必须立即调用 recordSuccessCase，然后结束
+                10. 禁止直接输出 JSON，必须通过工具提交
+                11. 无论成功失败，最终都必须调用 recordSuccessCase 或 recordFailureCase
 
-                【Generator 代码生成规范 - 最高优先级】
-                16. generatorCode 和 solutionCode 都必须使用 `public class Main`，禁止使用其他类名！
-                17. 禁止使用 TestGenerator、Generator、TestCaseGenerator 等其他类名
-                18. 如果 generatorCode 需要额外的辅助类，只能作为内部类，不能独立声明
-                19. 禁止 package 声明，禁止非 Main 类名的 public class
-                20. 执行前必须确认代码中只有 `public class Main`，没有其他 public class
+                【代码规范 - 最高优先级】
+                12. 所有代码必须使用 `public class Main`，禁止 package 声明
+                13. generatorCode 每次必须生成不同的输入，使用时间戳或随机数种子
 
-                【重要】所有代码必须使用 Java，类名必须是 Main，禁止 package 声明。
-                executeCode 和 runGeneratorCode 的 language 参数必须为 "java"。
+                所有代码必须使用 Java，language 参数必须为 "java"。
                 """)
         String generateTestCases(
                 @MemoryId String memoryId,
                 @V("problem") ProblemGenerationResponse problem,
-                @V("referenceSamplesJson") String referenceSamplesJson,
                 @V("primarySolutionCode") String primarySolutionCode,
-                @V("crossValidatorSolutionCode") String crossValidatorSolutionCode,
                 @V("budgetWarning") String budgetWarning);
     }
 
